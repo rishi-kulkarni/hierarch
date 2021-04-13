@@ -1,0 +1,11 @@
+README.md
+setup.py
+Hierarch.egg-info/PKG-INFO
+Hierarch.egg-info/SOURCES.txt
+Hierarch.egg-info/dependency_links.txt
+Hierarch.egg-info/requires.txt
+Hierarch.egg-info/top_level.txt
+hierarch/__init__.py
+hierarch/internal_functions.py
+hierarch/power.py
+hierarch/stats.py
