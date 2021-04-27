@@ -3,7 +3,7 @@ import scipy.stats as stats
 
 
 
-def gen_fake_data(reference, params, seed=None):
+def gen_fake_data(reference, params, return_all=False, seed=None):
     
     rng = np.random.default_rng(seed)
 
@@ -33,8 +33,10 @@ def gen_fake_data(reference, params, seed=None):
             np.put(fakedata[:,i], np.where(fakedata[:,i] > -1), ranlist)
 
         if i > 0: fakedata[:,i] = fakedata[:,i] + fakedata[:,i-1]    
-
-    return fakedata[:,-2]
+    if return_all == True:
+        return fakedata[:,-2], fakedata
+    else:
+        return fakedata[:,-2]
 
 def make_ref_container(samples_per_level=[]):
     

@@ -3,11 +3,17 @@ import numba as nb
 import scipy.stats as stats
 from collections import Counter
 import sympy.utilities.iterables as iterables
+from numba import types
+from numba.cpython.unsafe.tuple import tuple_setitem
+from numba.extending import intrinsic
+from numba.core import typing
 
-@nb.jit(nopython=True)
+@nb.jit(nopython=True, cache=True)
 def nb_unique(input_data, axis=0):
     '''
-    Internal function that serves the same purpose as np.unique(a, return_index=True, return_counts=True) when called on a 2D arraya. Appears to asymptotically approach np.unique's speed when every row is unique, but otherwise runs faster.
+    Internal function that serves the same purpose as np.unique(a, return_index=True, return_counts=True) when called on a 2D arrays. Appears to asymptotically approach np.unique's speed when every row is unique, but otherwise runs faster. 
+    
+    Note: the returned indexes are NOT the indexes of the unique rows in the original data, they are the indexes of the unique rows in the sorted data. This doesn't make any difference so long as input_data is sorted.
     
     Parameters
     ----------
@@ -70,7 +76,13 @@ def welch_statistic(sample_a, sample_b):
     
     t = meandiff / np.sqrt(var_weight_one + var_weight_two)
     return t
-        
+
+
+@nb.jit(nopython=True)
+def quick_shuffle(w):
+    np.random.shuffle(w)
+
+
 @nb.jit()
 def randomize_chunks(values, keys):
     '''
@@ -90,12 +102,12 @@ def randomize_chunks(values, keys):
         List of permuted values of the second-to-last column of the values array
     
     '''
-    append_col=[]
+    append_col=np.empty(0, dtype=np.float64)
     for i in keys:
-        append_col.append(np.random.permutation(values[np_all_axis1(values[:,:-2] == values[i][:-2])][:,-2]))
+        append_col = np.hstack((append_col, np.random.permutation(values[np_all_axis1(values[:,:-2] == values[i][:-2])][:,-2])))
     return append_col
 
-@nb.njit(cache=True)
+@nb.jit(nopython=True, cache=True)
 def np_all_axis1(x):
     """
     Numba compatible version of np.all(x, axis=1)
@@ -115,29 +127,38 @@ def np_all_axis1(x):
         out = np.logical_and(out, x[:, i])
     return out
 
-@nb.jit
-def nb_reindexer(i, resampled, data, columns_to_resample, unique_idx_list, randnos, rng_place):
+@nb.jit(nopython=True)
+def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape):
     '''
-    Internal function for numba-accelerated iterating through a numpy array. 
+    Internal function for numba-accelerated iterating through a numpy array. Don't call this outside of bootstrap_sample()
     
     
     '''
-    idx = np.empty(0, dtype=np.int64)
-
-    for key in resampled[:,:i]:
+    rng_place = 0
+    
+    for i in range(start+1, shape):
         
-        idx_no = np.where(np_all_axis1(data[unique_idx_list][:,:i] == key))[0]
-        
-        if not columns_to_resample[i]:
-            idx = np.hstack((idx, idx_no))
-        else:
-            idx_no = idx_no[randnos[rng_place:rng_place+idx_no.size] % idx_no.size]
-            rng_place += idx_no.size
-            idx = np.hstack((idx,idx_no))
+        idx = np.empty(0, dtype=np.int64)
 
-    return idx, rng_place
+        for key in resampled_idx:
+            
 
-def permute_column(data, col_to_permute=-2, iterator=None):
+            idx_no = cluster_dict[nb_tuple(key, i)]
+
+            if not columns_to_resample[i]:
+                idx = np.hstack((idx, idx_no))
+            else:
+                idx_no = idx_no[randnos[rng_place:rng_place+idx_no.size] % idx_no.size]
+                idx_no.sort()
+                rng_place += idx_no.size
+                idx = np.hstack((idx,idx_no))
+                
+        resampled_idx = idx
+            
+    resampled = data[resampled_idx]
+    return resampled
+
+def permute_column(data, col_to_permute=-2, iterator=None, seed=None):
 
     """
     This function takes column n and permutes the column n - 1 while accounting for the clustering in column n - 2. This function is memoized based on the hash of the data and col_to_permute variable, which improves performance significantly. 
@@ -162,7 +183,7 @@ def permute_column(data, col_to_permute=-2, iterator=None):
     
     """
     
-    key = hash(tuple((data[:,:col_to_permute].tobytes(),col_to_permute)))
+    key = hash(tuple((data[:,:col_to_permute+1].tobytes(),col_to_permute)))
     
     try:
         values, indexes, counts = permute_column.__dict__[key]
@@ -176,17 +197,25 @@ def permute_column(data, col_to_permute=-2, iterator=None):
     if iterator == None:
         try:
             keys = unique_idx_w_cache(values)[-2]
-            append_col = randomize_chunks(values, keys)        
-            shuffled_col_values = np.concatenate(append_col)
+            shuffled_col_values = randomize_chunks(values, keys)        
+
             
         except:
     
-            pre_col_values = data[:,col_to_permute-1][indexes]
-            shuffled_col_values = np.random.permutation(pre_col_values)
+            shuffled_col_values = data[:,col_to_permute-1][indexes]
+            quick_shuffle(shuffled_col_values)
+
     else:
             shuffled_col_values = iterator
-    new_col = np.repeat(shuffled_col_values, counts)
-    permuted = np.copy(data)
+    
+    
+    if len(shuffled_col_values) != data[:,col_to_permute-1].size:
+        new_col = np.repeat(shuffled_col_values, counts)
+    else:
+        new_col = shuffled_col_values
+        
+        
+    permuted = data.copy()
     permuted[:,col_to_permute-1] = new_col
     return permuted
     
@@ -210,7 +239,7 @@ def bootstrap_agg(bootstrap_sample, func=np.nanmean, agg_to=-2, first_data_col=-
         bootstrap_sample = np.append(bootstrap_sample, append_col,axis=1)
     return bootstrap_sample
 
-def mean_agg(data, groupby=-3):
+def mean_agg(data, ref='None', groupby=-3):
 
     """
     Performs a "groupby" aggregation by taking the mean. Much better performance than bootstrap_agg above, but can only be used for quantities that can be calculated element-wise (such as mean.)
@@ -218,7 +247,7 @@ def mean_agg(data, groupby=-3):
     Parameters
     ----------
     data: array
-        Data to perform operation on. 
+        Data to perform operation on. Row to aggregate to must be sorted. 
     
     groupby = int
         Column to groupby. The default of -3 assumes the last column is values and the second-to-last column is some kind of categorical label (technical replicate 1, 2, etc.)
@@ -230,26 +259,32 @@ def mean_agg(data, groupby=-3):
         A reduced array such that the labels in column groupby (now column index -2) are no longer duplicated and column index -1 contains averaged data values. 
     
     
-    """   
-    
-    
-    key = hash(data[:,:groupby+1].tobytes())
-    
+    """
+    if isinstance(ref, str):
+        key = hash((data[:,:groupby+1].tobytes(), ref))
+    else:
+        key = hash((data[:,:groupby+1].tobytes(), ref.tobytes()))
     try:
         unique_idx, unique_counts = mean_agg.__dict__[key]
     except:
-        unique_idx, unique_counts = np.unique(data[:,:groupby+1], return_index=True, return_counts=True,axis=0)[1:]
-        mean_agg.__dict__[key] = unique_idx, unique_counts
-        if len(mean_agg.__dict__.keys()) > 50:
-            mean_agg.__dict__.pop(list(mean_agg.__dict__)[0])
-    
+        if isinstance(ref, str):
+            unique_idx, unique_counts = nb_unique(data[:,:groupby+1])[1:]
+            mean_agg.__dict__[key] = unique_idx, unique_counts
+            if len(mean_agg.__dict__.keys()) > 50:
+                mean_agg.__dict__.pop(list(mean_agg.__dict__)[0])
+        else:
+            unique_idx = make_ufunc_list(data[:,:groupby+1], ref)
+            unique_counts = np.append(unique_idx[1:], data[:,groupby+1].size) - unique_idx
+            mean_agg.__dict__[key] = unique_idx, unique_counts
+            if len(mean_agg.__dict__.keys()) > 50:
+                mean_agg.__dict__.pop(list(mean_agg.__dict__)[0])
     
     avgcol = np.add.reduceat(data[:,-1], unique_idx) / unique_counts
-    permute = data[unique_idx][:,:-1]
-    permute[:,-1] = avgcol
+    data_agg = data[unique_idx][:,:-1]
+    data_agg[:,-1] = avgcol
     
     
-    return permute
+    return data_agg
 
 
 
@@ -282,8 +317,19 @@ def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
     
     
     '''
+    data_key = hash(data[:,start:data_col].tobytes())
+    unique_idx_list = unique_idx_w_cache(data)
+
+    
+    try:
+        cluster_dict = bootstrap_sample.__dict__[data_key]
+    except:   
+        
+        cluster_dict = id_clusters(data, tuple(unique_idx_list))
+        bootstrap_sample.__dict__[data_key] = cluster_dict
     
     rng = np.random.default_rng(seed)
+    randnos = rng.integers(low=2**32,size=data[:,:data_col].size)
 
     if data_col < 0:
         shape = data.shape[1] + data_col
@@ -291,31 +337,23 @@ def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
         shape = data_col - 1
         
     columns_to_resample = np.array([True for k in range(shape)])
+    
     for key in skip:
         columns_to_resample[key] = False
 
-
-    randnos = rng.integers(low=2**32,size=data[:,:data_col].size)
-
-
-    unique_idx_list = unique_idx_w_cache(data)
     rng_place=0
 
-    resampled = data[unique_idx_list[start]].copy()
-        
-    for i in range(start+1, shape):
-        
-        idx, rng_place = nb_reindexer(i, resampled, data, columns_to_resample, unique_idx_list[i], randnos, rng_place)
-        
-        idx = unique_idx_list[i][idx]
-        
-        resampled = data[idx]
-    
+    resampled_idx = unique_idx_list[start]
+   
+    resampled = nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape)
+
     return resampled
 
 
 
+
 def relabel_col(resample_data, original_data, col):
+    
     
     """
     Relabels in-place duplicate clusters for later calculations that require aggregation based on cluster. This function requires input of the raw (unresampled) data to determine how large each cluster should be. 
@@ -336,28 +374,35 @@ def relabel_col(resample_data, original_data, col):
     
     """
     
-    a = resample_data[:,col]
-    b = original_data[:,col]
+    a = resample_data[:,:col+1]
+    b = original_data[:,:col+1]
     
-    unique, counts = np.unique(a, return_counts=True)
+    unique, counts = nb_unique(a)[0::2]
+    unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
     ca = dict(zip(unique, counts))
     ca = Counter(ca)
     
-    unique, counts = np.unique(b, return_counts=True)
+    unique, counts = nb_unique(b)[0::2]
+    unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
     cb = dict(zip(unique, counts))
     cb = Counter(cb)
 
     
-    relabel = 0.01
+    relabel = 0.99
 
     while any((ca - cb) & cb):
         idx=[]
         for key in (ca - cb) & cb:
-            idx.append(list(np.where(a == key)[0][-(cb)[key]:]))
+            idx.append(list(np.where(np_all_axis1(a == np.frombuffer(key)))[0][-(cb)[key]:]))
 
         np.add.at(resample_data[:,col], np.concatenate(idx), relabel)
-        ca = Counter(resample_data[:,col])
-        relabel += 0.01
+        
+        a = resample_data[:,:col+1]
+        unique, counts = nb_unique(a)[0::2]
+        unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
+        ca = dict(zip(unique, counts))
+        ca = Counter(ca)
+        relabel -= 0.01
 
         
 def msp(items):
@@ -449,5 +494,49 @@ def unique_idx_w_cache(data):
     
         return unique_lists        
 
+def label_encode(a):
+    '''
+    Performs label encoding on an array.
+    
+    Parameters
+    ----------
+    
+    a: array
+    
+    Returns
+    ----------
+    a: float64 array
+    
+    '''
+    for i in range(a.shape[1]):
+        a[:,i] = np.unique(a[:,i], return_inverse=True)[1] + 1
+    return a
+
+@nb.jit
+def make_ufunc_list(target, ref):    
+    reference = ref
+    for i in range(reference.shape[1] - target.shape[1]):
+        reference, counts = nb_unique(reference[:,:-1])[0::2]
+    reference = np.hstack((reference, counts.reshape(1,-1).T)).astype(np.int64)
+    ufunc_list = np.empty(0, dtype=np.int64)
+    i = 0
+
+    while i < target.shape[0]:
+        ufunc_list = np.append(ufunc_list, i)
+        i += reference[:,-1][np_all_axis1(reference[:,:-1] == target[i])][0]
+        
+    return ufunc_list
+
+@nb.jit(nopython=True, cache=True)
+def id_clusters(test_data, unique_idx_list_test):
+
+    dicto = {}
+    for i in range(1, test_data.shape[1]-1):
+        for key in nb_unique(test_data[:,:i])[1]:
+            dicto[nb_tuple(key, i)] = unique_idx_list_test[i][np.where(np_all_axis1(test_data[:,:i][unique_idx_list_test[i]] == test_data[:,:i][key]))]      
+    return dicto  
 
 
+@nb.jit
+def nb_tuple(a,b):
+    return tuple((a,b))

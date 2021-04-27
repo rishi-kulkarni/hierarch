@@ -3,14 +3,18 @@ import setuptools
 with open("README.md" , "r") as fh:
     long_description = fh.read()
     
-setuptools.setup(name = "Hierarch",
-                version = "0.1",
+setuptools.setup(name = "hierarch",
+                version = "0.1.3",
+
                 author = "Rishi Kulkarni",
                 author_email = "rkulk@stanford.edu",
                 description = "Hierarchical hypothesis testing library",
                 long_description = long_description,
                 long_description_content_type = "text/markdown",
-                url="https://github.com/rishi-kulkarni/Hierarch",
+
+                url="https://github.com/rishi-kulkarni/hierarch",
+
+
                 packages=setuptools.find_packages(),
                 install_requires=["numpy", "sympy", "scipy", "numba"],
                 classifiers=[

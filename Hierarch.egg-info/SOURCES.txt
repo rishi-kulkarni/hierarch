@@ -9,3 +9,8 @@ hierarch/__init__.py
 hierarch/internal_functions.py
 hierarch/power.py
 hierarch/stats.py
+hierarch.egg-info/PKG-INFO
+hierarch.egg-info/SOURCES.txt
+hierarch.egg-info/dependency_links.txt
+hierarch.egg-info/requires.txt
+hierarch.egg-info/top_level.txt
