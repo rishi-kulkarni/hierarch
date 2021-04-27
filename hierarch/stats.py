@@ -4,13 +4,22 @@ import sympy.utilities.iterables as iterables
 
 
 
-def two_sample_test(data, treatment_col, teststat="welch", skip=[], bootstraps=500, permutations=100, seed=None):
+def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootstraps=500, permutations=100, seed=None):
+    
+    data = np.copy(data_array)
+    
+
+    
+    if data.dtype != 'float64':
+        data[:,:-1] = internal_functions.label_encode(data[:,:-1])
+        data = data.astype('float64')
+    data = np.unique(data, axis=0)
 
     treatment_labels = np.unique(data[:,treatment_col])
     
     if treatment_labels.size != 2:
-        raise Exception("Needs 2 samples.")
-    
+        raise Exception("Needs 2 samples.")        
+        
     rng = np.random.default_rng(seed)
     
     if teststat == "welch":
@@ -23,8 +32,8 @@ def two_sample_test(data, treatment_col, teststat="welch", skip=[], bootstraps=5
         it_list = list(internal_functions.msp(pre_col_values))
 
     levels_to_agg = data.shape[1] - treatment_col - 3
-    test = internal_functions.mean_agg(data)
-    for m in range(levels_to_agg - 1):
+    test = data
+    for m in range(levels_to_agg):
         test = internal_functions.mean_agg(test)
     
     truediff = np.abs(teststat(test[test[:,treatment_col] == treatment_labels[0]][:,-1], test[test[:,treatment_col] == treatment_labels[1]][:,-1]))
@@ -37,7 +46,7 @@ def two_sample_test(data, treatment_col, teststat="welch", skip=[], bootstraps=5
 
         bootstrapped_sample = internal_functions.bootstrap_sample(data, start=treatment_col+1, skip=skip, seed=rng)
         for m in range(levels_to_agg):
-            bootstrapped_sample = internal_functions.mean_agg(bootstrapped_sample)
+            bootstrapped_sample = internal_functions.mean_agg(bootstrapped_sample, data)
 
 
 
@@ -54,7 +63,8 @@ def two_sample_test(data, treatment_col, teststat="welch", skip=[], bootstraps=5
                 means.append(teststat(permute_resample[permute_resample[:,treatment_col] == treatment_labels[0]][:,-1], permute_resample[permute_resample[:,treatment_col] == treatment_labels[1]][:,-1]))
 
     pval = np.where((np.array(np.abs(means)) >= truediff))[0].size / len(means)
-    
+     
+
     return pval
 
 def two_sample_test_jackknife(data, treatment_col, permutations='all', teststat='welch'):
