@@ -3,7 +3,7 @@
 
 name: Upload Python Package to PyPi and Conda
 
-on: push
+on: release
 
 jobs:
   deploy:
