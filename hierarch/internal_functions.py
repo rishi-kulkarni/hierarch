@@ -3,10 +3,6 @@ import numba as nb
 import scipy.stats as stats
 from collections import Counter
 import sympy.utilities.iterables as iterables
-from numba import types
-from numba.cpython.unsafe.tuple import tuple_setitem
-from numba.extending import intrinsic
-from numba.core import typing
 
 @nb.jit(nopython=True, cache=True)
 def nb_unique(input_data, axis=0):
@@ -80,6 +76,10 @@ def welch_statistic(sample_a, sample_b):
 
 @nb.jit(nopython=True)
 def quick_shuffle(w):
+    '''
+    This is faster than np.random.shuffle for some reason.
+    
+    '''
     np.random.shuffle(w)
 
 
@@ -130,7 +130,37 @@ def np_all_axis1(x):
 @nb.jit(nopython=True)
 def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape):
     '''
-    Internal function for numba-accelerated iterating through a numpy array. Don't call this outside of bootstrap_sample()
+    Internal function for shuffling a design matrix. 
+    
+    Parameters
+    ----------
+    
+    resampled_idx: 1D array of ints
+        Indices of the unique rows of the design matrix up until the first column that needs shuffling.
+        
+    data: 2D array
+        The original data
+        
+    columns_to_resample: 1D bool array
+        False for columns that do not need resampling.
+        
+    cluster_dict: numba TypedDict
+        This function uses the cluster_dict to quickly grab the indices in the column i+1 that correspond to a unique row in column i. 
+        
+    randnos: 1D array of ints
+        List of random numbers generated outside of numba to use for resampling with replacement. Generating these outside of numba is faster for now as numba np.random does not take the size argument.
+    
+    start: int
+        First column of the data matrix to resample
+        
+    shape: int
+        Last column of the data matrix to resample
+    
+    Output
+    ----------
+    
+    resampled: 2D array
+        Cluster-aware resampling of the input data array
     
     
     '''
@@ -318,33 +348,40 @@ def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
     
     '''
     data_key = hash(data[:,start:data_col].tobytes())
+    
     unique_idx_list = unique_idx_w_cache(data)
 
-    
+    ### check if we've cached the cluster_dict
     try:
         cluster_dict = bootstrap_sample.__dict__[data_key]
+    ### if we haven't generate it and cache it
     except:   
-        
-        cluster_dict = id_clusters(data, tuple(unique_idx_list))
+        cluster_dict = id_clusters(tuple(unique_idx_list))
         bootstrap_sample.__dict__[data_key] = cluster_dict
     
+    ###seedable for reproducibility
     rng = np.random.default_rng(seed)
+    ###generating a long list of random ints is cheaper than making a bunch of short lists. we know we'll never need more random numbers than the size of the design matrix, so make exactly that many random ints.
     randnos = rng.integers(low=2**32,size=data[:,:data_col].size)
 
+    
+    ###figure out the bounds of the design matrix
     if data_col < 0:
         shape = data.shape[1] + data_col
     else:
         shape = data_col - 1
-        
+    
+    ###resample these columns
     columns_to_resample = np.array([True for k in range(shape)])
     
+    ###figure out if we need to skip resampling any columns
     for key in skip:
         columns_to_resample[key] = False
 
-    rng_place=0
-
+    ###initialize the indices of clusters in the last column that isn't resampled
     resampled_idx = unique_idx_list[start]
    
+    ###generate the bootstrapped sample
     resampled = nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape)
 
     return resampled
@@ -352,57 +389,59 @@ def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
 
 
 
-def relabel_col(resample_data, original_data, col):
+# def relabel_col(resample_data, original_data, col):
     
     
-    """
-    Relabels in-place duplicate clusters for later calculations that require aggregation based on cluster. This function requires input of the raw (unresampled) data to determine how large each cluster should be. 
+#     """
+#     Relabels in-place duplicate clusters for later calculations that require aggregation based on cluster. This function requires input of the raw (unresampled) data to determine how large each cluster should be. 
+    
+#     Note: This is going to be deprecated as it is much slower than make_ufunc_list.
 
-    Parameters
-    ----------
+#     Parameters
+#     ----------
     
-    resample_data, original_data: arrays (dtype='float')
-        The column to relabel must have the same column index in both data sets. 
+#     resample_data, original_data: arrays (dtype='float')
+#         The column to relabel must have the same column index in both data sets. 
         
-    col: int
-        Column index of the column to relabel
+#     col: int
+#         Column index of the column to relabel
         
-    Returns
-    ----------
+#     Returns
+#     ----------
     
-    Modifies resample_data in-place by adding multiples of 0.01 to repeated clusters. If the test statistic of interest does not require aggregation by cluster, this function is not doing much aside from adding a little overhead. 
+#     Modifies resample_data in-place by adding multiples of 0.01 to repeated clusters. If the test statistic of interest does not require aggregation by cluster, this function is not doing much aside from adding a little overhead. 
     
-    """
+#     """
     
-    a = resample_data[:,:col+1]
-    b = original_data[:,:col+1]
+#     a = resample_data[:,:col+1]
+#     b = original_data[:,:col+1]
     
-    unique, counts = nb_unique(a)[0::2]
-    unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
-    ca = dict(zip(unique, counts))
-    ca = Counter(ca)
+#     unique, counts = nb_unique(a)[0::2]
+#     unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
+#     ca = dict(zip(unique, counts))
+#     ca = Counter(ca)
     
-    unique, counts = nb_unique(b)[0::2]
-    unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
-    cb = dict(zip(unique, counts))
-    cb = Counter(cb)
+#     unique, counts = nb_unique(b)[0::2]
+#     unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
+#     cb = dict(zip(unique, counts))
+#     cb = Counter(cb)
 
     
-    relabel = 0.99
+#     relabel = 0.99
 
-    while any((ca - cb) & cb):
-        idx=[]
-        for key in (ca - cb) & cb:
-            idx.append(list(np.where(np_all_axis1(a == np.frombuffer(key)))[0][-(cb)[key]:]))
+#     while any((ca - cb) & cb):
+#         idx=[]
+#         for key in (ca - cb) & cb:
+#             idx.append(list(np.where(np_all_axis1(a == np.frombuffer(key)))[0][-(cb)[key]:]))
 
-        np.add.at(resample_data[:,col], np.concatenate(idx), relabel)
+#         np.add.at(resample_data[:,col], np.concatenate(idx), relabel)
         
-        a = resample_data[:,:col+1]
-        unique, counts = nb_unique(a)[0::2]
-        unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
-        ca = dict(zip(unique, counts))
-        ca = Counter(ca)
-        relabel -= 0.01
+#         a = resample_data[:,:col+1]
+#         unique, counts = nb_unique(a)[0::2]
+#         unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
+#         ca = dict(zip(unique, counts))
+#         ca = Counter(ca)
+#         relabel -= 0.01
 
         
 def msp(items):
@@ -513,7 +552,26 @@ def label_encode(a):
     return a
 
 @nb.jit
-def make_ufunc_list(target, ref):    
+def make_ufunc_list(target, ref):
+    '''
+    Makes a list of indices to perform a ufunc.reduceat operation along. This is necessary when an aggregation operation is performed while grouping by a column that was resampled.
+    
+    Parameters
+    ----------
+    
+    target: 2D array, float64
+        Array that the groupby-aggregate operation will be performed on.
+    
+    ref: 2D array, float64
+        Array that the target array was resampled from.
+        
+    Output
+    ----------
+    
+    ufunc_list: 1D array of ints
+        Indices to reduceat along.
+    
+    '''
     reference = ref
     for i in range(reference.shape[1] - target.shape[1]):
         reference, counts = nb_unique(reference[:,:-1])[0::2]
@@ -527,16 +585,37 @@ def make_ufunc_list(target, ref):
         
     return ufunc_list
 
-@nb.jit(nopython=True, cache=True)
-def id_clusters(test_data, unique_idx_list_test):
+@nb.jit(nopython=True)
+def id_clusters(unique_idx_list):
+    '''
+    Constructs a Typed Dictionary from a tuple of arrays corresponding to unique cluster positions in a design matrix. Again, this indirectly assumes that the design matrix is lexsorted starting from the last column. 
+    
+    Parameters
+    ----------
+    unique_idx_list: tuple of 1D arrays (ints64)
+        Tuple of arrays that identify the unique rows in columns 0:0, 0:1, 0:n, where n is the final column of the design matrix portion of the data.
+        
+    Outputs
+    ----------
+    cluster_dict: TypedDict of UniTuples (int64 x 2) : 1D array (int64)
+        Each tuple is the coordinate of the first index corresponding to a cluster in row m and each 1D array contains the indices of the nested clusters in row m + 1. 
+    
+    '''
+    cluster_dict = {}
+    for i in range(1, len(unique_idx_list)):
+        for j in range(unique_idx_list[i-1].size):
+            if j < unique_idx_list[i-1].size-1:
+                value = unique_idx_list[i][(unique_idx_list[i] >= unique_idx_list[i-1][j]) & (unique_idx_list[i] < unique_idx_list[i-1][j+1])]
+            else:
+                value = unique_idx_list[i][(unique_idx_list[i] >= unique_idx_list[i-1][j])] 
 
-    dicto = {}
-    for i in range(1, test_data.shape[1]-1):
-        for key in nb_unique(test_data[:,:i])[1]:
-            dicto[nb_tuple(key, i)] = unique_idx_list_test[i][np.where(np_all_axis1(test_data[:,:i][unique_idx_list_test[i]] == test_data[:,:i][key]))]      
-    return dicto  
+            cluster_dict[nb_tuple(unique_idx_list[i-1][j], i)] = value    
+    return cluster_dict  
 
 
-@nb.jit
+@nb.jit(nopython=True)
 def nb_tuple(a,b):
+    '''
+    Makes a tuple from two ints.
+    '''
     return tuple((a,b))
