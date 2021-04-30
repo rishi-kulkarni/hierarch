@@ -4,6 +4,13 @@ import scipy.stats as stats
 from collections import Counter
 import sympy.utilities.iterables as iterables
 
+@nb.njit
+def nb_data_grabber(data, col, treatment_labels):
+    ret_list = []
+    for key in treatment_labels:
+        ret_list.append(data[:,-1][np.equal(data[:,col],key)])                        
+    return ret_list
+
 @nb.jit(nopython=True, cache=True)
 def nb_unique(input_data, axis=0):
     '''
@@ -48,9 +55,12 @@ def nb_unique(input_data, axis=0):
     return data[idx], idx, counts
 
 @nb.jit(nopython=True)
-def welch_statistic(sample_a, sample_b):
+def welch_statistic(data, col, treatment_labels):
     '''
     Internal function that calculates Welch's t statistic.
+    
+    Details on the validity of this test statistic can be found in "Studentized permutation tests for non-i.i.d. hypotheses and the generalized Behrens-Fisher problem
+" by Arnold Janssen. https://doi.org/10.1016/S0167-7152(97)00043-6. 
     
     Parameters
     ----------
@@ -64,6 +74,9 @@ def welch_statistic(sample_a, sample_b):
     Note: The formula for Welch's t reduces to Student's t when sample_a and sample_b are the same size, so use this function whenever you need a t statistic.
     
     '''
+
+    sample_a, sample_b = nb_data_grabber(data, 0, treatment_labels)
+    
     meandiff = (np.mean(sample_a) - np.mean(sample_b))
     
     var_weight_one = (np.var(sample_a)*(sample_a.size/(sample_a.size - 1))) / len(sample_a)
@@ -208,12 +221,9 @@ def permute_column(data, col_to_permute=-2, iterator=None, seed=None):
     ---------
     permuted: an array the same size as data with column n - 1 permuted within column n - 2's clusters.
     
-    
-    
-    
     """
     
-    key = hash(tuple((data[:,:col_to_permute+1].tobytes(),col_to_permute)))
+    key = hash(data[:,:col_to_permute+1].tobytes())
     
     try:
         values, indexes, counts = permute_column.__dict__[key]
@@ -225,29 +235,26 @@ def permute_column(data, col_to_permute=-2, iterator=None, seed=None):
     
 
     if iterator == None:
-        try:
-            keys = unique_idx_w_cache(values)[-2]
-            shuffled_col_values = randomize_chunks(values, keys)        
-
-            
-        except:
-    
+        if col_to_permute == 1:
             shuffled_col_values = data[:,col_to_permute-1][indexes]
-            quick_shuffle(shuffled_col_values)
+            quick_shuffle(shuffled_col_values)            
+        else:
+            keys = unique_idx_w_cache(values)[-2]
+            shuffled_col_values = randomize_chunks(values, keys)     
 
     else:
             shuffled_col_values = iterator
     
     
-    if len(shuffled_col_values) != data[:,col_to_permute-1].size:
-        new_col = np.repeat(shuffled_col_values, counts)
-    else:
+    if len(shuffled_col_values) == data.shape[0]:
         new_col = shuffled_col_values
+    else:
+        new_col = np.repeat(shuffled_col_values, counts)
         
-        
-    permuted = data.copy()
-    permuted[:,col_to_permute-1] = new_col
-    return permuted
+    permute = np.array(data)    
+    permute[:,col_to_permute-1] = new_col
+    
+    return permute
     
 def bootstrap_agg(bootstrap_sample, func=np.nanmean, agg_to=-2, first_data_col=-1):
     

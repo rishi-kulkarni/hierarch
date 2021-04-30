@@ -13,7 +13,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootst
     if data.dtype != 'float64':
         data[:,:-1] = internal_functions.label_encode(data[:,:-1])
         data = data.astype('float64')
-    data = np.unique(data, axis=0)
+    data = np.unique(data, axis=0) ###sorts the data matrix by row. 100% necessary.
 
     treatment_labels = np.unique(data[:,treatment_col])
     
@@ -36,7 +36,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootst
     for m in range(levels_to_agg):
         test = internal_functions.mean_agg(test)
     
-    truediff = np.abs(teststat(test[test[:,treatment_col] == treatment_labels[0]][:,-1], test[test[:,treatment_col] == treatment_labels[1]][:,-1]))
+    truediff = np.abs(teststat(test, treatment_col, treatment_labels))
 
 
     means = []
@@ -55,12 +55,12 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootst
             #we are sampling all 20 permutations, so no need for rng. 
             for k in it_list:
                 permute_resample = internal_functions.permute_column(bootstrapped_sample, treatment_col+1, k)
-                means.append(teststat(permute_resample[permute_resample[:,treatment_col] == treatment_labels[0]][:,-1], permute_resample[permute_resample[:,treatment_col] == treatment_labels[1]][:,-1]))
+                means.append(teststat(permute_resample, treatment_col, treatment_labels))
         
         else:
             for k in range(permutations):
                 permute_resample = internal_functions.permute_column(bootstrapped_sample, treatment_col+1)
-                means.append(teststat(permute_resample[permute_resample[:,treatment_col] == treatment_labels[0]][:,-1], permute_resample[permute_resample[:,treatment_col] == treatment_labels[1]][:,-1]))
+                means.append(teststat(permute_resample, treatment_col, treatment_labels))
 
     pval = np.where((np.array(np.abs(means)) >= truediff))[0].size / len(means)
      
