@@ -1,14 +1,45 @@
 import numpy as np
 import numba as nb
-import scipy.stats as stats
-from collections import Counter
 import sympy.utilities.iterables as iterables
 import hierarch.numba_overloads
 
-@nb.njit
+@nb.jit(nopython=True, cache=True)
+def nb_tuple(a,b):
+    '''
+    Makes a tuple from two numbers.
+    
+    Parameters
+    ----------
+    a, b: numbers of the same dtype (or can be cast to the same dtype).
+    
+    Returns
+    ----------
+    tuple(a, b)
+    
+    '''
+    return tuple((a,b))
+
+@nb.jit(nopython=True, cache=True)
 def nb_data_grabber(data, col, treatment_labels):
+    '''
+    Numba-accelerated fancy indexing.
+    
+    Parameters
+    ----------
+    data: 2D array
+    
+    col: int
+    
+    treatment_labels: 1D array or list
+    
+    Returns
+    ----------
+    ret_list: list of 1D arrays
+    
+    '''
     ret_list = []
     for key in treatment_labels:
+        #grab values from the data column for each label
         ret_list.append(data[:,-1][np.equal(data[:,col],key)])                        
     return ret_list
 
@@ -56,31 +87,40 @@ def nb_unique(input_data, axis=0):
     idx = np.append(idx, additional_uniques)
     
     #get counts for each unique row
-    counts = [1]
     counts = np.append(idx[1:], data.shape[0])
     counts = counts - idx
 
     return data[idx], orig_idx[idx], counts
 
-@nb.jit(nopython=True)
+@nb.jit(nopython=True, cache=True)
 def welch_statistic(data, col, treatment_labels):
     '''
-    Internal function that calculates Welch's t statistic.
+    Calculates Welch's t statistic.
     
-    Details on the validity of this test statistic can be found in "Studentized permutation tests for non-i.i.d. hypotheses and the generalized Behrens-Fisher problem
-" by Arnold Janssen. https://doi.org/10.1016/S0167-7152(97)00043-6. 
+    Takes a 2D data matrix, a column to classify data by, and the labels corresponding to the data of interest. Assumes that the largest (-1) column in the data matrix is the dependent variable. 
+
     
     Parameters
     ----------
-    
-    sample_a, sample_b: 1D arrays
+    data: 2D array
+        Data matrix. The first n - 1 columns are the design matrix and the nth column is the dependent variable.
+        
+    col: int
+        Columns of the design matrix used to classify the dependent variable into two groups.
+        
+    treatment_labels: 
+        The values of the elements in col. 
     
     Returns
     ----------
     t: float64
+        Welch's t statistic.
     
-    Note: The formula for Welch's t reduces to Student's t when sample_a and sample_b are the same size, so use this function whenever you need a t statistic.
-    
+    Notes
+    ----------
+    Details on the validity of this test statistic can be found in "Studentized permutation tests for non-i.i.d. hypotheses and the generalized Behrens-Fisher problem
+" by Arnold Janssen. https://doi.org/10.1016/S0167-7152(97)00043-6. 
+        
     '''
     
     #get our two samples from the data matrix
@@ -89,70 +129,110 @@ def welch_statistic(data, col, treatment_labels):
     #mean difference
     meandiff = (np.mean(sample_a) - np.mean(sample_b))
     
-    #weighted sample variances
+    #weighted sample variances - might be able to speed this up
     var_weight_one = (np.var(sample_a)*(sample_a.size/(sample_a.size - 1))) / len(sample_a)    
     var_weight_two = (np.var(sample_b)*(sample_b.size/(sample_b.size - 1))) / len(sample_b)
     
     #compute t statistic
     t = meandiff / np.sqrt(var_weight_one + var_weight_two)
+    
     return t
 
 
-@nb.jit(nopython=True)
-def quick_shuffle(w):
-    '''
-    This is faster than np.random.shuffle for some reason.
+@nb.jit(nopython=True, cache=True)
+def iter_return(data, col_to_permute, iterator, counts):
     
     '''
-    np.random.shuffle(w)
-
-
-@nb.jit()
-def randomize_chunks(shuffled_col, splits):
-    '''
-    Internal function for permuting a column a data while paying attention to the dependency structure of the prior column. Numba's implementation of np.random.permutation is faster than numpy's, so we're using this.
+    Shuffles a column based on an input. Cannot be cluster-aware.
     
     Parameters
     ----------
-    values: 2D array
-        2D array of unique rows, second-to-last column is the column to be permuted
     
-    keys: 2D array
-        2D array of unique rows of the values array, not including the final row
+    data: 2D array of floats
+        Original data matrix
+        
+    col_to_permute: int
+        Column n, which is immediately right of the column that will be shuffled. 
+        
+    iterator: 1D array
+        Shuffled values to put into data.
+               
+    counts: 1D array of ints
+        Number of times each value in iterator needs to be repeated (typically 1)
         
     Returns
     ----------
-    append_col: list
-        List of permuted values of the second-to-last column of the values array
+    
+    permute: 2D array
+        Array the same shape as data, but with column n-1 resampled with replacement.
     
     '''
-    for idx, _ in enumerate(splits):
-        if idx < len(splits)-1:
-            np.random.shuffle(shuffled_col[splits[idx]:splits[idx+1]-1])
-        else:
-            np.random.shuffle(shuffled_col[splits[idx]:])
+    
+    #the shuffled column is defined by an input variable
+    shuffled_col_values = np.array(iterator)
+    
+    #check if the shuffled column needs to be duplicated to fit back into the original matrix
+    if len(shuffled_col_values) < data.shape[0]:
+        shuffled_col_values = np.repeat(shuffled_col_values, counts)
+        
+    permute = data.copy()
+    permute[:,col_to_permute-1] = shuffled_col_values
+    return permute
+
 
 @nb.jit(nopython=True, cache=True)
-def np_all_axis1(x):
-    """
-    Numba compatible version of np.all(x, axis=1)
+def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
+    '''
+    Randomly shuffles a column in a cluster-aware fashion if necessary.
     
     Parameters
     ----------
-    x: 2D array
     
+    data: 2D array of floats
+        Original data matrix
+        
+    col_to_permute: int
+        Column n, which is immediately right of the column that will be shuffled. 
+        
+    shuffled_col_values: 1D array
+        Values in the column to be shuffled
+        
+    keys: 1D array of ints
+        Indexes of the clusters in the shuffled column. If there is no clustering in the column to be shuffled, this still needs to be a 1D array to get Numba to behave properly.
+        
+    counts: 1D array of ints
+        Number of times each value in shuffled_col_values needs to be repeated (typically 1)
+        
     Returns
     ----------
-    out: 1D array
-        Boolean array the same length as x in axis 0
     
-    """
-    out = np.ones(x.shape[0], dtype=np.bool8)
-    for i in range(x.shape[1]):
-        out = np.logical_and(out, x[:, i])
-    return out
+    permute: 2D array
+        Array the same shape as data, but with column n-1 resampled with replacement.
+    
+    '''
+    
+    #if there are no clusters, just shuffle the columns
+    if col_to_permute == 1:
+        np.random.shuffle(shuffled_col_values)
+    
+    #if not, shuffle between the indices in keys
+    else:
+        for idx, _ in enumerate(keys):
+            if idx < len(keys)-1:
+                np.random.shuffle(shuffled_col_values[keys[idx]:keys[idx+1]-1])
+            else:
+                np.random.shuffle(shuffled_col_values[keys[idx]:])
+    
+    #check if the shuffled column needs to be duplicated to fit back into the original matrix
+    if len(shuffled_col_values) < data.shape[0]:
+        shuffled_col_values = np.repeat(shuffled_col_values, counts)
+    
+    permute = data.copy()
+    permute[:,col_to_permute-1] = shuffled_col_values
+    
+    return permute
 
-@nb.jit(nopython=True)
+@nb.jit(nopython=True, cache=True)
 def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape):
     '''
     Internal function for shuffling a design matrix. 
@@ -185,7 +265,7 @@ def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos
     ----------
     
     resampled: 2D array
-        Cluster-aware resampling of the input data array
+        Nested bootstrapped resample of the input data array
     
     
     '''
@@ -213,7 +293,7 @@ def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos
     resampled = data[resampled_idx]
     return resampled
 
-def permute_column(data, col_to_permute=-2, iterator=None, seed=None):
+def permute_column(data, col_to_permute=-2, iterator=None):
 
     """
     This function takes column n and permutes the column n - 1 while accounting for the clustering in column n - 2. This function is memoized based on the hash of the data and col_to_permute variable, which improves performance significantly. 
@@ -226,16 +306,16 @@ def permute_column(data, col_to_permute=-2, iterator=None, seed=None):
     col_to_permute: int
         Column n, which is immediately right of the column that will be shuffled. 
     
-    iterator: an iterator representing the multiset of permutations of column n - 1
-        In very small samples (n = 3 or 4), it is worthwhile to iterate through every permutation rather than hoping to randomly sample all of them. To use this, construct a multiset of permutations and iterate through using a for loop. Even at n = 5, it's faster to generate the multiset and randomly choose 100 elements from it than it is to approach it randomly. 
+    iterator: 1D array
+        An iterator representing an instance of the multiset of permutations of column n - 1. In very small samples (n = 3 or 4), it is worthwhile to iterate through every permutation rather than hoping to randomly sample all of them. To use this, construct a multiset of permutations and iterate through using a for loop. 
         
     Returns
     ---------
-    permuted: an array the same size as data with column n - 1 permuted within column n - 2's clusters.
+    permuted: an array the same size as data with column n - 1 permuted within column n - 2's clusters (if there are any).
     
     """
     
-    key = hash(data[:,:col_to_permute+1].tobytes())
+    key = hash(data[:,col_to_permute-1:col_to_permute+1].tobytes())
     
     try:
         values, indexes, counts = permute_column.__dict__[key]
@@ -246,50 +326,23 @@ def permute_column(data, col_to_permute=-2, iterator=None, seed=None):
             permute_column.__dict__.pop(list(permute_column.__dict__)[0])
     
 
-    if iterator == None:
-        shuffled_col_values = data[:,col_to_permute-1][indexes]
-        if col_to_permute == 1:
-            quick_shuffle(shuffled_col_values)            
-        else:
-            keys = unique_idx_w_cache(values)[-2]
-            randomize_chunks(shuffled_col_values, keys)     
-
+    if iterator is not None:
+        return iter_return(data, col_to_permute, tuple(iterator), counts)
+    
     else:
-            shuffled_col_values = iterator
-    
-    
-    if len(shuffled_col_values) < data.shape[0]:
-        shuffled_col_values = np.repeat(shuffled_col_values, counts)
-        
-    permute = np.array(data)    
-    permute[:,col_to_permute-1] = shuffled_col_values
-    
-    return permute
-    
-def bootstrap_agg(bootstrap_sample, func=np.nanmean, agg_to=-2, first_data_col=-1):
-    
-    '''
-    Groupby_aggregate function, but slower than mean_agg below. Probably not worth calling in most cases unless you have a strange aggregation to do, but you will probably save a lot of time in the end by jitting your aggregation in numba. 
-    
-    '''
-    
-    iterations = first_data_col - agg_to
-    for i in range(iterations):
-        append_col = np.empty(0)
-        for key in np.unique(bootstrap_sample[:,first_data_col - 1]):
-            append_col = np.append(append_col, func(bootstrap_sample[bootstrap_sample[:, first_data_col - 1] == key][:,first_data_col]))
-        append_col = append_col.reshape(append_col.size,1)
-        bootstrap_sample = bootstrap_sample[:,:-1]
-        idx = np.unique(bootstrap_sample, axis=0, return_index=True)[1]
-        bootstrap_sample = bootstrap_sample[np.sort(idx)]
-        bootstrap_sample = bootstrap_sample[:,:-1]
-        bootstrap_sample = np.append(bootstrap_sample, append_col,axis=1)
-    return bootstrap_sample
+        shuffled_col_values = data[:,col_to_permute-1][indexes]
+        try:
+            keys = unique_idx_w_cache(values)[-2]
+        except:
+            keys = unique_idx_w_cache(values)[-1]
+        return randomized_return(data, col_to_permute, shuffled_col_values, keys, counts)
+            
 
+    
 def mean_agg(data, ref='None', groupby=-3):
 
     """
-    Performs a "groupby" aggregation by taking the mean. Much better performance than bootstrap_agg above, but can only be used for quantities that can be calculated element-wise (such as mean.)
+    Performs a "groupby" aggregation by taking the mean. Can only be used for quantities that can be calculated element-wise (such as mean.) Potentially workable with Numba guvectorized ufuncs, too.
     
     Parameters
     ----------
@@ -302,9 +355,8 @@ def mean_agg(data, ref='None', groupby=-3):
     Returns
     ----------
     
-    permute: array
+    data_agg: array
         A reduced array such that the labels in column groupby (now column index -2) are no longer duplicated and column index -1 contains averaged data values. 
-    
     
     """
     if isinstance(ref, str):
@@ -402,63 +454,6 @@ def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
     resampled = nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape)
 
     return resampled
-
-
-
-
-# def relabel_col(resample_data, original_data, col):
-    
-    
-#     """
-#     Relabels in-place duplicate clusters for later calculations that require aggregation based on cluster. This function requires input of the raw (unresampled) data to determine how large each cluster should be. 
-    
-#     Note: This is going to be deprecated as it is much slower than make_ufunc_list.
-
-#     Parameters
-#     ----------
-    
-#     resample_data, original_data: arrays (dtype='float')
-#         The column to relabel must have the same column index in both data sets. 
-        
-#     col: int
-#         Column index of the column to relabel
-        
-#     Returns
-#     ----------
-    
-#     Modifies resample_data in-place by adding multiples of 0.01 to repeated clusters. If the test statistic of interest does not require aggregation by cluster, this function is not doing much aside from adding a little overhead. 
-    
-#     """
-    
-#     a = resample_data[:,:col+1]
-#     b = original_data[:,:col+1]
-    
-#     unique, counts = nb_unique(a)[0::2]
-#     unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
-#     ca = dict(zip(unique, counts))
-#     ca = Counter(ca)
-    
-#     unique, counts = nb_unique(b)[0::2]
-#     unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
-#     cb = dict(zip(unique, counts))
-#     cb = Counter(cb)
-
-    
-#     relabel = 0.99
-
-#     while any((ca - cb) & cb):
-#         idx=[]
-#         for key in (ca - cb) & cb:
-#             idx.append(list(np.where(np_all_axis1(a == np.frombuffer(key)))[0][-(cb)[key]:]))
-
-#         np.add.at(resample_data[:,col], np.concatenate(idx), relabel)
-        
-#         a = resample_data[:,:col+1]
-#         unique, counts = nb_unique(a)[0::2]
-#         unique = np.frombuffer(unique.tobytes(), dtype = np.dtype('S{:d}'.format(unique.shape[1] * unique.dtype.itemsize)))
-#         ca = dict(zip(unique, counts))
-#         ca = Counter(ca)
-#         relabel -= 0.01
 
         
 def msp(items):
@@ -568,7 +563,7 @@ def label_encode(a):
         a[:,i] = np.unique(a[:,i], return_inverse=True)[1] + 1
     return a
 
-@nb.jit
+@nb.jit(nopython=True, cache=True)
 def make_ufunc_list(target, ref):
     '''
     Makes a list of indices to perform a ufunc.reduceat operation along. This is necessary when an aggregation operation is performed while grouping by a column that was resampled.
@@ -592,17 +587,17 @@ def make_ufunc_list(target, ref):
     reference = ref
     for i in range(reference.shape[1] - target.shape[1]):
         reference, counts = nb_unique(reference[:,:-1])[0::2]
-    reference = np.hstack((reference, counts.reshape(1,-1).T)).astype(np.int64)
+    counts = counts.astype(np.int64)
     ufunc_list = np.empty(0, dtype=np.int64)
     i = 0
 
     while i < target.shape[0]:
         ufunc_list = np.append(ufunc_list, i)
-        i += reference[:,-1][np_all_axis1(reference[:,:-1] == target[i])][0]
+        i += counts[np.all((reference == target[i]), axis=1)][0]
         
     return ufunc_list
 
-@nb.jit(nopython=True)
+@nb.jit(nopython=True, cache=True)
 def id_clusters(unique_idx_list):
     '''
     Constructs a Typed Dictionary from a tuple of arrays corresponding to unique cluster positions in a design matrix. Again, this indirectly assumes that the design matrix is lexsorted starting from the last column. 
@@ -630,9 +625,4 @@ def id_clusters(unique_idx_list):
     return cluster_dict  
 
 
-@nb.jit(nopython=True)
-def nb_tuple(a,b):
-    '''
-    Makes a tuple from two ints.
-    '''
-    return tuple((a,b))
+

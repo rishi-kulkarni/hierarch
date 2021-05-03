@@ -4,11 +4,9 @@ import sympy.utilities.iterables as iterables
 
 
 
-def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootstraps=500, permutations=100, seed=None):
+def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootstraps=500, permutations=100, return_null=False, seed=None):
     
     data = np.copy(data_array)
-    
-
     
     if data.dtype != 'float64':
         data[:,:-1] = internal_functions.label_encode(data[:,:-1])
@@ -64,8 +62,10 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootst
 
     pval = np.where((np.array(np.abs(means)) >= truediff))[0].size / len(means)
      
-
-    return pval
+    if return_null==True:
+        return pval, means
+    else:
+        return pval
 
 def two_sample_test_jackknife(data, treatment_col, permutations='all', teststat='welch'):
     
