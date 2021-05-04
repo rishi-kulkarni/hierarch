@@ -1,69 +1,116 @@
 import numpy as np
+import math
 import hierarch.internal_functions as internal_functions
+import hierarch.resampling as resampling
 import sympy.utilities.iterables as iterables
 
 
 
-def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootstraps=500, permutations=100, return_null=False, seed=None):
+def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootstraps=100, permutations=1000, return_null=False, seed=None):
     
-    data = np.copy(data_array)
+    '''
+    Two-tailed two-sample hierarchical permutation test.
     
-    if data.dtype != 'float64':
-        data[:,:-1] = internal_functions.label_encode(data[:,:-1])
-        data = data.astype('float64')
-    data = np.unique(data, axis=0) ###sorts the data matrix by row. 100% necessary.
-
-    treatment_labels = np.unique(data[:,treatment_col])
-    
-    if treatment_labels.size != 2:
-        raise Exception("Needs 2 samples.")        
+    Parameters
+    -----------
+    data_array: 2D array or pandas DataFrame
+        Array-like containing both the independent and dependent variables to be analyzed. It's assumed that the final (rightmost) column contains the dependent variable values.
         
+    treatment_col: int
+        The index number of the column containing "two samples" to be compared. Indexing starts at 0.
+        
+    teststat: function or string
+        The test statistic to use to perform the hypothesis test. "Welch" automatically calls the Welch t-statistic for a difference of means test.
+        
+    skip: list of ints
+        Columns to skip in the bootstrap. Skip columns that were sampled without replacement from the prior column. 
+        
+    bootstraps: int
+        Number of bootstraps to perform.
+        
+    permutations: int or "all"
+        Number of permutations to perform PER bootstrap sample. "all" for exact test.
+        
+    return_null: bool
+        Set to true to return the null distribution as well as the p value.
+        
+    seed: int or numpy random Generator
+        Seedable for reproducibility. 
+        
+    Returns
+    ---------
+    pval: float64
+        Two-tailed p-value.
+        
+    null_distribution: list of floats
+        The empirical null distribution used to calculate the p-value.   
+    
+    '''
+    
+    #turns the input array or dataframe into a float64 array
+    data = internal_functions.preprocess_data(data_array)
+    
+    #set random state
     rng = np.random.default_rng(seed)
     
+    #initialize and fit the bootstrapper to the data
+    bootstrapper = resampling.Bootstrapper(random_state=rng)
+    bootstrapper.fit(data, skip)
+    
+    #gather labels 
+    treatment_labels = np.unique(data[:,treatment_col])
+    
+    #raise an exception if there are more than two treatment labels
+    if treatment_labels.size != 2:
+        raise Exception("Needs 2 samples.")        
+    
+    #shorthand for welch_statistic
     if teststat == "welch":
         teststat = internal_functions.welch_statistic
-
-    if permutations == "all":
-        #determine total number of possible level 0 permutations 
-        indexes = np.unique(data[:,:treatment_col+2],return_index=True,axis=0)[1]
-        pre_col_values = data[:,treatment_col][indexes]
-        it_list = list(internal_functions.msp(pre_col_values))
-
+         
+    
+    #aggregate our data up to the treated level and determine the observed test statistic
     levels_to_agg = data.shape[1] - treatment_col - 3
     test = data
     for m in range(levels_to_agg):
-        test = internal_functions.mean_agg(test)
+        test = internal_functions.mean_agg(test)    
+    truediff = teststat(test, treatment_col, treatment_labels)
+
+    #initialize and fit the permuter to the aggregated data
+    permuter = resampling.Permuter()
     
-    truediff = np.abs(teststat(test, treatment_col, treatment_labels))
-
-
-    means = []
+    if permutations == "all":
+        permuter.fit(test, treatment_col+1, exact=True)
+        
+        #in the exact case, determine and set the total number of possible permutations 
+        counts = np.unique(test[:,0], return_counts=True)[1]
+        permutations = binomial(counts.sum(), counts[0])
+        
+    else:
+        #just fit the permuter if this is a randomized test
+        permuter.fit(test, treatment_col+1)
+        
+    #initialize empty null distribution list
+    null_distribution = []
+   
     for j in range(bootstraps):
-
-        #resample level 1 data from level 2s, using our generator for reproducible rng
-
-        bootstrapped_sample = internal_functions.bootstrap_sample(data, start=treatment_col+1, skip=skip, seed=rng)
+        #generate a bootstrapped sample and aggregate it up to the treated level
+        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col+1)
         for m in range(levels_to_agg):
             bootstrapped_sample = internal_functions.mean_agg(bootstrapped_sample, data)
-
-
-
-
-        if permutations == "all":
-            #we are sampling all 20 permutations, so no need for rng. 
-            for k in it_list:
-                permute_resample = internal_functions.permute_column(bootstrapped_sample, treatment_col+1, k)
-                means.append(teststat(permute_resample, treatment_col, treatment_labels))
         
-        else:
-            for k in range(permutations):
-                permute_resample = internal_functions.permute_column(bootstrapped_sample, treatment_col+1)
-                means.append(teststat(permute_resample, treatment_col, treatment_labels))
+        #generate permuted samples, calculate test statistic, append to null distribution
+        for k in range(permutations):
+            permute_resample = permuter.transform(bootstrapped_sample)
+            null_distribution.append(teststat(permute_resample, treatment_col, treatment_labels))
 
-    pval = np.where((np.array(np.abs(means)) >= truediff))[0].size / len(means)
-     
+    #two tailed test, so check where absolute values of the null distribution are greater or equal to the absolute value of the observed difference
+    pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[0].size / len(null_distribution)
+    
+    
     if return_null==True:
-        return pval, means
+        return pval, null_distribution
+    
     else:
         return pval
 
@@ -99,3 +146,9 @@ def two_sample_test_jackknife(data, treatment_col, permutations='all', teststat=
     pval = np.where((np.array(np.abs(means)) >= np.abs(truediff)))[0].size / len(means)
     
     return pval
+
+def binomial(x, y):
+    try:
+        return math.factorial(x) // math.factorial(y) // math.factorial(x - y)
+    except ValueError:
+        return 0

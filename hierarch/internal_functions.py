@@ -2,6 +2,7 @@ import numpy as np
 import numba as nb
 import sympy.utilities.iterables as iterables
 import hierarch.numba_overloads
+import pandas as pd
 
 @nb.jit(nopython=True, cache=True)
 def nb_tuple(a,b):
@@ -293,51 +294,6 @@ def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos
     resampled = data[resampled_idx]
     return resampled
 
-def permute_column(data, col_to_permute=-2, iterator=None):
-
-    """
-    This function takes column n and permutes the column n - 1 while accounting for the clustering in column n - 2. This function is memoized based on the hash of the data and col_to_permute variable, which improves performance significantly. 
-    
-    Parameters
-    ----------
-    data: arrays
-        The numpy array that contains the data of interest.
-        
-    col_to_permute: int
-        Column n, which is immediately right of the column that will be shuffled. 
-    
-    iterator: 1D array
-        An iterator representing an instance of the multiset of permutations of column n - 1. In very small samples (n = 3 or 4), it is worthwhile to iterate through every permutation rather than hoping to randomly sample all of them. To use this, construct a multiset of permutations and iterate through using a for loop. 
-        
-    Returns
-    ---------
-    permuted: an array the same size as data with column n - 1 permuted within column n - 2's clusters (if there are any).
-    
-    """
-    
-    key = hash(data[:,col_to_permute-1:col_to_permute+1].tobytes())
-    
-    try:
-        values, indexes, counts = permute_column.__dict__[key]
-    except:
-        values, indexes, counts = np.unique(data[:,:col_to_permute+1],return_index=True, return_counts=True,axis=0)   
-        permute_column.__dict__[key] = values, indexes, counts
-        if len(permute_column.__dict__.keys()) > 50:
-            permute_column.__dict__.pop(list(permute_column.__dict__)[0])
-    
-
-    if iterator is not None:
-        return iter_return(data, col_to_permute, tuple(iterator), counts)
-    
-    else:
-        shuffled_col_values = data[:,col_to_permute-1][indexes]
-        try:
-            keys = unique_idx_w_cache(values)[-2]
-        except:
-            keys = unique_idx_w_cache(values)[-1]
-        return randomized_return(data, col_to_permute, shuffled_col_values, keys, counts)
-            
-
     
 def mean_agg(data, ref='None', groupby=-3):
 
@@ -384,77 +340,6 @@ def mean_agg(data, ref='None', groupby=-3):
     
     
     return data_agg
-
-
-
-def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
-    
-    '''
-    Performs a numba-accelerated multi-level bootstrap of input data. 
-    
-    Parameters
-    ----------
-    data: 2D array
-        The input array containing your data in the final (or more) columns and categorical variables classifying the data in every prior column. Each column is resampled based on the column prior, so make sure your column ordering reflects that.
-    
-    start: int
-        This is the first column corresponding to a level that you want to resample. Note: this column won't be resampled, but the next one will be resampled based on this column.
-        
-    data_col: int
-        This is the first column that has your measured values (and therefore shouldn't be resampled). Default assumes you have a single column of measured values.
-        
-    skip: list of ints
-        Column indices provided here will be sampled WITHOUT replacement. Ideally, you should skip columns that do not represent randomly sampled data (i.e. rather than having a random sample from that level, you have all the data).
-        
-    seed: int or numpy.random.Generator object
-        Enables seeding of the random resampling for reproducibility. The function runs much faster in a loop if it does not have to initialize a generator every time, so passing it something is good for performance.
-        
-    Returns
-    ----------
-    resampled: 2D array
-        Data array the same number of columns as data, might be longer or shorter if your experimental data is imbalanced.
-    
-    
-    '''
-    data_key = hash(data[:,start:data_col].tobytes())
-    
-    unique_idx_list = unique_idx_w_cache(data)
-
-    ### check if we've cached the cluster_dict
-    try:
-        cluster_dict = bootstrap_sample.__dict__[data_key]
-    ### if we haven't generate it and cache it
-    except:   
-        cluster_dict = id_clusters(tuple(unique_idx_list))
-        bootstrap_sample.__dict__[data_key] = cluster_dict
-    
-    ###seedable for reproducibility
-    rng = np.random.default_rng(seed)
-    ###generating a long list of random ints is cheaper than making a bunch of short lists. we know we'll never need more random numbers than the size of the design matrix, so make exactly that many random ints.
-    randnos = rng.integers(low=2**32,size=data[:,:data_col].size)
-
-    
-    ###figure out the bounds of the design matrix
-    if data_col < 0:
-        shape = data.shape[1] + data_col
-    else:
-        shape = data_col - 1
-    
-    ###resample these columns
-    columns_to_resample = np.array([True for k in range(shape)])
-    
-    ###figure out if we need to skip resampling any columns
-    for key in skip:
-        columns_to_resample[key] = False
-
-    ###initialize the indices of clusters in the last column that isn't resampled
-    resampled_idx = unique_idx_list[start]
-   
-    ###generate the bootstrapped sample
-    resampled = nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape)
-
-    return resampled
-
         
 def msp(items):
     '''Yield the permutations of `items` where items is either a list
@@ -545,24 +430,6 @@ def unique_idx_w_cache(data):
     
         return unique_lists        
 
-def label_encode(a):
-    '''
-    Performs label encoding on an array.
-    
-    Parameters
-    ----------
-    
-    a: array
-    
-    Returns
-    ----------
-    a: float64 array
-    
-    '''
-    for i in range(a.shape[1]):
-        a[:,i] = np.unique(a[:,i], return_inverse=True)[1] + 1
-    return a
-
 @nb.jit(nopython=True, cache=True)
 def make_ufunc_list(target, ref):
     '''
@@ -624,5 +491,148 @@ def id_clusters(unique_idx_list):
             cluster_dict[nb_tuple(unique_idx_list[i-1][j], i)] = value    
     return cluster_dict  
 
+def preprocess_data(data):
+    '''
+    Performs label encoding without overwriting numerical variables.
+    
+    Parameters
+    ----------
+    data: 2D array or pandas DataFrame
+        Data to be encoded.
+        
+    Returns
+    ----------
+    encoded: 2D array of float64s
+        The array underlying data, but all elements that cannot be cast to np.float64s replaced with integer values.
+        
+    '''
+    if isinstance(data, np.ndarray):
+        encoded = data.copy()
+    elif isinstance(data, pd.DataFrame):
+        encoded = data.to_numpy()
+    for idx, v in enumerate(encoded.T):
+        try:
+            encoded = encoded.astype(np.float64)
+            break
+        except:
+            try:
+                encoded[:,idx] = encoded[:,idx].astype(np.float64)
+            except:
+                encoded[:,idx] = np.unique(v, return_inverse=True)[1]
+    encoded = np.unique(encoded, axis=0)
+    return encoded
+
+# def permute_column(data, col_to_permute=-2, iterator=None):
+
+#     """
+#     This function takes column n and permutes the column n - 1 while accounting for the clustering in column n - 2. This function is memoized based on the hash of the data and col_to_permute variable, which improves performance significantly. 
+    
+#     Parameters
+#     ----------
+#     data: arrays
+#         The numpy array that contains the data of interest.
+        
+#     col_to_permute: int
+#         Column n, which is immediately right of the column that will be shuffled. 
+    
+#     iterator: 1D array
+#         An iterator representing an instance of the multiset of permutations of column n - 1. In very small samples (n = 3 or 4), it is worthwhile to iterate through every permutation rather than hoping to randomly sample all of them. To use this, construct a multiset of permutations and iterate through using a for loop. 
+        
+#     Returns
+#     ---------
+#     permuted: an array the same size as data with column n - 1 permuted within column n - 2's clusters (if there are any).
+    
+#     """
+    
+#     key = hash(data[:,col_to_permute-1:col_to_permute+1].tobytes())
+    
+#     try:
+#         values, indexes, counts = permute_column.__dict__[key]
+#     except:
+#         values, indexes, counts = np.unique(data[:,:col_to_permute+1],return_index=True, return_counts=True,axis=0)   
+#         permute_column.__dict__[key] = values, indexes, counts
+#         if len(permute_column.__dict__.keys()) > 50:
+#             permute_column.__dict__.pop(list(permute_column.__dict__)[0])
+    
+
+#     if iterator is not None:
+#         return iter_return(data, col_to_permute, tuple(iterator), counts)
+    
+#     else:
+#         shuffled_col_values = data[:,col_to_permute-1][indexes]
+#         try:
+#             keys = unique_idx_w_cache(values)[-2]
+#         except:
+#             keys = unique_idx_w_cache(values)[-1]
+#         return randomized_return(data, col_to_permute, shuffled_col_values, keys, counts)
 
 
+# def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
+    
+#     '''
+#     Performs a numba-accelerated multi-level bootstrap of input data. 
+    
+#     Parameters
+#     ----------
+#     data: 2D array
+#         The input array containing your data in the final (or more) columns and categorical variables classifying the data in every prior column. Each column is resampled based on the column prior, so make sure your column ordering reflects that.
+    
+#     start: int
+#         This is the first column corresponding to a level that you want to resample. Note: this column won't be resampled, but the next one will be resampled based on this column.
+        
+#     data_col: int
+#         This is the first column that has your measured values (and therefore shouldn't be resampled). Default assumes you have a single column of measured values.
+        
+#     skip: list of ints
+#         Column indices provided here will be sampled WITHOUT replacement. Ideally, you should skip columns that do not represent randomly sampled data (i.e. rather than having a random sample from that level, you have all the data).
+        
+#     seed: int or numpy.random.Generator object
+#         Enables seeding of the random resampling for reproducibility. The function runs much faster in a loop if it does not have to initialize a generator every time, so passing it something is good for performance.
+        
+#     Returns
+#     ----------
+#     resampled: 2D array
+#         Data array the same number of columns as data, might be longer or shorter if your experimental data is imbalanced.
+    
+    
+#     '''
+#     data_key = hash(data[:,start:data_col].tobytes())
+    
+#     unique_idx_list = unique_idx_w_cache(data)
+
+#     ### check if we've cached the cluster_dict
+#     try:
+#         cluster_dict = bootstrap_sample.__dict__[data_key]
+#     ### if we haven't generate it and cache it
+#     except:   
+#         cluster_dict = id_clusters(tuple(unique_idx_list))
+#         bootstrap_sample.__dict__[data_key] = cluster_dict
+    
+#     ###seedable for reproducibility
+#     rng = np.random.default_rng(seed)
+#     ###generating a long list of random ints is cheaper than making a bunch of short lists. we know we'll never need more random numbers than the size of the design matrix, so make exactly that many random ints.
+#     randnos = rng.integers(low=2**32,size=data[:,:data_col].size)
+
+    
+#     ###figure out the bounds of the design matrix
+#     if data_col < 0:
+#         shape = data.shape[1] + data_col
+#     else:
+#         shape = data_col - 1
+    
+#     ###resample these columns
+#     columns_to_resample = np.array([True for k in range(shape)])
+    
+#     ###figure out if we need to skip resampling any columns
+#     for key in skip:
+#         columns_to_resample[key] = False
+
+#     ###initialize the indices of clusters in the last column that isn't resampled
+#     resampled_idx = unique_idx_list[start]
+   
+#     ###generate the bootstrapped sample
+#     resampled = nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape)
+
+#     return resampled
+
+            
