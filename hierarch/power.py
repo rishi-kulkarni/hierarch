@@ -1,7 +1,18 @@
 import numpy as np
 import scipy.stats as stats
 
-
+class DataSimulator:
+    def __init__(self, paramlist, random_state=None):
+        self.parameters = paramlist
+        self.random_generator = np.random.default_rng(random_state)
+        
+    def fit(self, hierarchy=[]):
+        self.container = make_ref_container(hierarchy.copy())
+        
+    def generate(self):
+        output = self.container.copy()
+        output[:,-1] = gen_fake_data(self.container, self.parameters, seed=self.random_generator)
+        return output
 
 def gen_fake_data(reference, params, return_all=False, seed=None):
     
