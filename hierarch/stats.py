@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import hierarch.internal_functions as internal_functions
+from hierarch.internal_functions import GroupbyMean
 import hierarch.resampling as resampling
 import sympy.utilities.iterables as iterables
 
@@ -70,10 +71,14 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootst
          
     
     #aggregate our data up to the treated level and determine the observed test statistic
+    aggregator = GroupbyMean()
+    aggregator.fit(data)
+    
     levels_to_agg = data.shape[1] - treatment_col - 3
     test = data
-    for m in range(levels_to_agg):
-        test = internal_functions.mean_agg(test)    
+    
+    test = aggregator.transform(test, iterations=levels_to_agg)
+
     truediff = teststat(test, treatment_col, treatment_labels)
 
     #initialize and fit the permuter to the aggregated data
@@ -96,8 +101,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootst
     for j in range(bootstraps):
         #generate a bootstrapped sample and aggregate it up to the treated level
         bootstrapped_sample = bootstrapper.transform(data, start=treatment_col+1)
-        for m in range(levels_to_agg):
-            bootstrapped_sample = internal_functions.mean_agg(bootstrapped_sample, data)
+        bootstrapped_sample = aggregator.transform(bootstrapped_sample, iterations=levels_to_agg)
         
         #generate permuted samples, calculate test statistic, append to null distribution
         for k in range(permutations):

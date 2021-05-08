@@ -84,12 +84,16 @@ def nb_unique(input_data, axis=0):
     
     #get original indexes
     idx = [0]
-    additional_uniques = np.nonzero(~np.all((data[:-1] == data[1:]),axis=1))[0] + 1
+    if data.shape[1] > 1:
+        additional_uniques = np.nonzero(~np.all((data[:-1] == data[1:]),axis=1))[0] + 1
+    else:
+        additional_uniques = np.nonzero(~(data[:-1] == data[1:]))[0] + 1
     idx = np.append(idx, additional_uniques)
     
     #get counts for each unique row
     counts = np.append(idx[1:], data.shape[0])
     counts = counts - idx
+    
 
     return data[idx], orig_idx[idx], counts
 
@@ -522,117 +526,73 @@ def preprocess_data(data):
     encoded = np.unique(encoded, axis=0)
     return encoded
 
-# def permute_column(data, col_to_permute=-2, iterator=None):
-
-#     """
-#     This function takes column n and permutes the column n - 1 while accounting for the clustering in column n - 2. This function is memoized based on the hash of the data and col_to_permute variable, which improves performance significantly. 
-    
-#     Parameters
-#     ----------
-#     data: arrays
-#         The numpy array that contains the data of interest.
-        
-#     col_to_permute: int
-#         Column n, which is immediately right of the column that will be shuffled. 
-    
-#     iterator: 1D array
-#         An iterator representing an instance of the multiset of permutations of column n - 1. In very small samples (n = 3 or 4), it is worthwhile to iterate through every permutation rather than hoping to randomly sample all of them. To use this, construct a multiset of permutations and iterate through using a for loop. 
-        
-#     Returns
-#     ---------
-#     permuted: an array the same size as data with column n - 1 permuted within column n - 2's clusters (if there are any).
-    
-#     """
-    
-#     key = hash(data[:,col_to_permute-1:col_to_permute+1].tobytes())
-    
-#     try:
-#         values, indexes, counts = permute_column.__dict__[key]
-#     except:
-#         values, indexes, counts = np.unique(data[:,:col_to_permute+1],return_index=True, return_counts=True,axis=0)   
-#         permute_column.__dict__[key] = values, indexes, counts
-#         if len(permute_column.__dict__.keys()) > 50:
-#             permute_column.__dict__.pop(list(permute_column.__dict__)[0])
+class GroupbyMean:
+    def __init__(self):
+        pass
     
 
-#     if iterator is not None:
-#         return iter_return(data, col_to_permute, tuple(iterator), counts)
-    
-#     else:
-#         shuffled_col_values = data[:,col_to_permute-1][indexes]
-#         try:
-#             keys = unique_idx_w_cache(values)[-2]
-#         except:
-#             keys = unique_idx_w_cache(values)[-1]
-#         return randomized_return(data, col_to_permute, shuffled_col_values, keys, counts)
-
-
-# def bootstrap_sample(data, start=0, data_col=-1, skip=[], seed=None):
-    
-#     '''
-#     Performs a numba-accelerated multi-level bootstrap of input data. 
-    
-#     Parameters
-#     ----------
-#     data: 2D array
-#         The input array containing your data in the final (or more) columns and categorical variables classifying the data in every prior column. Each column is resampled based on the column prior, so make sure your column ordering reflects that.
-    
-#     start: int
-#         This is the first column corresponding to a level that you want to resample. Note: this column won't be resampled, but the next one will be resampled based on this column.
-        
-#     data_col: int
-#         This is the first column that has your measured values (and therefore shouldn't be resampled). Default assumes you have a single column of measured values.
-        
-#     skip: list of ints
-#         Column indices provided here will be sampled WITHOUT replacement. Ideally, you should skip columns that do not represent randomly sampled data (i.e. rather than having a random sample from that level, you have all the data).
-        
-#     seed: int or numpy.random.Generator object
-#         Enables seeding of the random resampling for reproducibility. The function runs much faster in a loop if it does not have to initialize a generator every time, so passing it something is good for performance.
-        
-#     Returns
-#     ----------
-#     resampled: 2D array
-#         Data array the same number of columns as data, might be longer or shorter if your experimental data is imbalanced.
-    
-    
-#     '''
-#     data_key = hash(data[:,start:data_col].tobytes())
-    
-#     unique_idx_list = unique_idx_w_cache(data)
-
-#     ### check if we've cached the cluster_dict
-#     try:
-#         cluster_dict = bootstrap_sample.__dict__[data_key]
-#     ### if we haven't generate it and cache it
-#     except:   
-#         cluster_dict = id_clusters(tuple(unique_idx_list))
-#         bootstrap_sample.__dict__[data_key] = cluster_dict
-    
-#     ###seedable for reproducibility
-#     rng = np.random.default_rng(seed)
-#     ###generating a long list of random ints is cheaper than making a bunch of short lists. we know we'll never need more random numbers than the size of the design matrix, so make exactly that many random ints.
-#     randnos = rng.integers(low=2**32,size=data[:,:data_col].size)
-
-    
-#     ###figure out the bounds of the design matrix
-#     if data_col < 0:
-#         shape = data.shape[1] + data_col
-#     else:
-#         shape = data_col - 1
-    
-#     ###resample these columns
-#     columns_to_resample = np.array([True for k in range(shape)])
-    
-#     ###figure out if we need to skip resampling any columns
-#     for key in skip:
-#         columns_to_resample[key] = False
-
-#     ###initialize the indices of clusters in the last column that isn't resampled
-#     resampled_idx = unique_idx_list[start]
-   
-#     ###generate the bootstrapped sample
-#     resampled = nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict, randnos, start, shape)
-
-#     return resampled
-
+    def fit(self, reference_data):
+        self.reference_dict = {}
+        self.cache_dict = {}
+        reference = reference_data[:,:-1]
+        for i in reversed(range(1, reference.shape[1])):
+            reference, counts = nb_unique(reference[:,:-1])[0::2]
+            self.reference_dict[i] = (reference, counts.astype(np.int64))
             
+    def transform(self, target, iterations=1):        
+        for i in range(iterations):
+            key = hash((target[:,:-2]).tobytes())
+            
+            try:
+                reduce_at_list, reduce_at_counts = self.cache_dict[key]
+            except:            
+                column = target.shape[1] - 2
+                reference, counts = self.reference_dict[column]
+                reduce_at_list = class_make_ufunc_list(target[:,:-2], reference, counts)
+                reduce_at_counts = np.append(reduce_at_list[1:], target[:,-2].size) - reduce_at_list
+                
+                self.cache_dict[key] = reduce_at_list, reduce_at_counts
+                if len(self.cache_dict.keys()) > 50:
+                    self.cache_dict.pop(list(self.cache_dict)[0])
+            
+            agg_col = np.add.reduceat(target[:,-1], reduce_at_list) / reduce_at_counts
+            target = target[reduce_at_list][:,:-1]
+            target[:,-1] = agg_col
+            
+        return target
+        
+@nb.jit(nopython=True, cache=True)
+def class_make_ufunc_list(target, reference, counts):
+    '''
+    Makes a list of indices to perform a ufunc.reduceat operation along. This is necessary when an aggregation operation is performed while grouping by a column that was resampled.
+    
+    Parameters
+    ----------
+    
+    target: 2D array, float64
+        Array that the groupby-aggregate operation will be performed on.
+    
+    ref: 2D array, float64
+        Array that the target array was resampled from.
+        
+    Output
+    ----------
+    
+    ufunc_list: 1D array of ints
+        Indices to reduceat along.
+    
+    '''
+    ufunc_list = np.empty(0, dtype=np.int64)
+    i = 0
+    
+    if reference.shape[1] > 1:
+        while i < target.shape[0]:
+            ufunc_list = np.append(ufunc_list, i)
+            i += counts[np.all((reference == target[i]), axis=1)][0]
+            
+    else:
+        while i < target.shape[0]:
+            ufunc_list = np.append(ufunc_list, i)
+            i += counts[(reference == target[i]).flatten()].item()       
+        
+    return ufunc_list
