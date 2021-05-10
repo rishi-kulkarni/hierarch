@@ -9,6 +9,38 @@ class Bootstrapper:
 
     Methods
     -------
+
+    __init__(random_state, kind="weights"):
+        random_state: int or numpy.random Generator
+            Seeds the Bootstrapper for reproducibility.
+
+        kind: str = "weights" or "bayesian" or "indexes"
+            Specifies the bootstrapping algorithm.
+
+            "weights" generates a set of new integer weights for
+            each datapoint.
+
+            "bayesian" generates a set of new real weights for
+            each datapoint.
+
+            "indexes" generates a set of new indexes for the dataset.
+            Mathematically, this is equivalent to demanding integer weights.
+
+            These approaches have different outputs - "weights" and "bayesian"
+            output arrays the same size of the original array, but with
+            every y-value multiplied by generated weight. "indexes" will
+            output an array that is not necessarily the same size as the
+            original array, but the weight of each y-value is 1, so certain
+            metrics are easier to compute. Assuming both algorithms generated
+            the "same" sample in terms of reweights, the arrays will be
+            equivalent after the groupby and aggregate step.
+
+            "weights" is generally faster "indexes," but some metrics cannot
+            conveniently be calculated from reweighted datapoints. The mean is
+            easy to calculate from reweighted values, however. There is no 
+            reindexing equivalent of "bayesian"
+
+
     fit(data, skip=[], y=-1)
         Fit the bootstrapper to data.
 
@@ -24,8 +56,9 @@ class Bootstrapper:
         column in the array that should not be resampled.
 
     '''
-    def __init__(self, random_state=None):
+    def __init__(self, random_state=None, kind='weights'):
         self.random_generator = np.random.default_rng(random_state)
+        self.kind = kind
 
     def fit(self, data, skip=[], y=-1):
         self.unique_idx_list = internal_functions.unique_idx_w_cache(data)
@@ -87,7 +120,7 @@ class Permuter:
 
         try:
             self.keys = internal_functions.unique_idx_w_cache(self.values)[-2]
-        except:
+        except IndexError:
             self.keys = internal_functions.unique_idx_w_cache(self.values)[-1]
 
         if self.exact is True:
