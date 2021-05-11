@@ -37,7 +37,7 @@ class Bootstrapper:
 
             "weights" is generally faster "indexes," but some metrics cannot
             conveniently be calculated from reweighted datapoints. The mean is
-            easy to calculate from reweighted values, however. There is no 
+            easy to calculate from reweighted values, however. There is no
             reindexing equivalent of "bayesian"
 
 

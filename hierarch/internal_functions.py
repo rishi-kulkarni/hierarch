@@ -468,6 +468,104 @@ def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict,
     return resampled
 
 
+@nb.jit(nopython=True, cache=True)
+def id_cluster_counts(unique_idx_list):
+    '''
+    Constructs a Typed Dictionary from a tuple of arrays corresponding
+    to number of values described by each cluster in a design matrix.
+    Again, this indirectly assumes that the design matrix is
+    lexsorted starting from the last column.
+
+    Parameters
+    ----------
+    unique_idx_list: tuple of 1D arrays (ints64)
+        Tuple of arrays that identify the unique rows in
+        columns 0:0, 0:1, 0:n, where n is the final column
+        of the design matrix portion of the data.
+
+    Outputs
+    ----------
+    cluster_dict: TypedDict of int64 : array (int64)
+        Each int is a column index corresponding to a
+        1D array of the number of indices within each cluster
+        in that column.
+
+    '''
+    cluster_dict = {}
+    for i in range(1, len(unique_idx_list)):
+        value = np.empty(0, dtype=np.int64)
+        for j in range(unique_idx_list[i-1].size):
+            if j < unique_idx_list[i-1].size-1:
+                value = np.append(value,
+                                  len(unique_idx_list[i][(unique_idx_list[i] >=
+                                      unique_idx_list[i-1][j]) &
+                                      (unique_idx_list[i] <
+                                       unique_idx_list[i-1][j+1])]))
+            else:
+                value = np.append(value,
+                                  len(unique_idx_list[i]
+                                      [(unique_idx_list[i] >=
+                                        unique_idx_list[i-1][j])]))
+
+        cluster_dict[i] = value
+    return cluster_dict
+
+
+@nb.njit
+def nb_reweighter(data, columns_to_resample, clusternum_dict, start, shape):
+    out = data.astype(np.float64)
+    weights = np.array([1 for i in clusternum_dict[start+1]])
+
+    for key in range(start+1, shape):
+        new_weight = np.empty(0, np.int64)
+        to_do = clusternum_dict[key]
+
+        if not columns_to_resample[key]:
+            for idx, v in enumerate(to_do):
+                num = np.array([1 for m in range(v.item())])
+                num *= weights[idx]
+                new_weight = np.append(new_weight, num)
+        else:
+            for idx, v in enumerate(to_do):
+                num = v.item()
+                randos = np.random.multinomial(num*weights[idx], [1/num]*num)
+                new_weight = np.append(new_weight, randos)
+
+        weights = new_weight
+
+    out[:, -1] = out[:, -1] * weights
+    return out
+
+
+@nb.njit
+def nb_reweighter_real(data, columns_to_resample,
+                       clusternum_dict, start, shape):
+    out = data.astype(np.float64)
+    weights = np.array([1 for i in clusternum_dict[start+1]], dtype=np.float64)
+
+    for key in range(start+1, shape):
+        new_weight = np.empty(0, np.float64)
+        to_do = clusternum_dict[key]
+
+        if not columns_to_resample[key]:
+            for idx, v in enumerate(to_do):
+                num = np.array([1 for m in range(v.item())], dtype=np.float64)
+                num *= weights[idx]
+                new_weight = np.append(new_weight, num)
+
+        else:
+            for idx, v in enumerate(to_do):
+                num = [1 for a in range(v.item())]
+                randos = (np.random.dirichlet(num, size=1)
+                          * weights[idx] * v.item())
+                new_weight = np.append(new_weight, randos)
+
+        weights = new_weight
+
+    out[:, -1] = out[:, -1] * weights
+    return out
+
+
 def mean_agg(data, ref='None', groupby=-3):
 
     """
@@ -515,7 +613,7 @@ def mean_agg(data, ref='None', groupby=-3):
     try:
 
         unique_idx, unique_counts = mean_agg.__dict__[key]
-    except:
+    except KeyError:
 
         if isinstance(ref, str):
 
@@ -684,7 +782,7 @@ def unique_idx_w_cache(data):
 
         return unique_lists
 
-    except:
+    except KeyError:
 
         unique_lists = []
 
@@ -854,13 +952,13 @@ def preprocess_data(data):
 
             break
 
-        except:
+        except ValueError:
 
             try:
 
                 encoded[:, idx] = encoded[:, idx].astype(np.float64)
 
-            except:
+            except ValueError:
 
                 encoded[:, idx] = np.unique(v, return_inverse=True)[1]
 
@@ -897,7 +995,7 @@ class GroupbyMean:
 
                 reduce_at_list, reduce_at_counts = self.cache_dict[key]
 
-            except:
+            except KeyError:
 
                 column = target.shape[1] - 2
 
