@@ -1,7 +1,8 @@
 import numpy as np
-
+from hierarch import numba_overloads
 import numba as nb
 import pandas as pd
+assert numba_overloads
 
 
 @nb.jit(nopython=True, cache=True)
@@ -712,8 +713,6 @@ def msp(items):
             rv.append(dat)
 
         return rv
-
-    u = list(set(items))
 
     E = list(reversed(sorted([i for i in items])))
 
