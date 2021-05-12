@@ -2,13 +2,13 @@ import numpy as np
 import math
 import hierarch.internal_functions as internal_functions
 from hierarch.internal_functions import GroupbyMean
-import hierarch.resampling as resampling
+from hierarch.resampling import Bootstrapper, Permuter
 import sympy.utilities.iterables as iterables
 
 
 def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
-                    bootstraps=100, permutations=1000, return_null=False,
-                    seed=None):
+                    bootstraps=100, permutations=1000, kind='weights',
+                    return_null=False, seed=None):
 
     '''
     Two-tailed two-sample hierarchical permutation test.
@@ -63,7 +63,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     rng = np.random.default_rng(seed)
 
     # initialize and fit the bootstrapper to the data
-    bootstrapper = resampling.Bootstrapper(random_state=rng)
+    bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip)
 
     # gather labels
@@ -90,7 +90,8 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     truediff = teststat(test, treatment_col, treatment_labels)
 
     # initialize and fit the permuter to the aggregated data
-    permuter = resampling.Permuter()
+    # don't need to seed this, as numba does not have individual generators yet
+    permuter = Permuter()
 
     if permutations == "all":
         permuter.fit(test, treatment_col+1, exact=True)
@@ -111,7 +112,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
         # generate a bootstrapped sample and aggregate it up to the
         # treated level
         bootstrapped_sample = bootstrapper.transform(data,
-                                                     start=treatment_col+1)
+                                                     start=treatment_col+2)
         bootstrapped_sample = aggregator.transform(bootstrapped_sample,
                                                    iterations=levels_to_agg)
 
