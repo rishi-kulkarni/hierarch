@@ -5,6 +5,20 @@ import pandas as pd
 assert numba_overloads
 
 
+@nb.njit
+def set_numba_random_state(seed):
+    '''
+    Helper function to set numba's RNG seed.
+
+    Parameters
+    ----------
+
+    seed: int
+
+    '''
+    np.random.seed(seed)
+
+
 @nb.jit(nopython=True, cache=True)
 def nb_tuple(a, b):
 
@@ -487,9 +501,10 @@ def id_cluster_counts(unique_idx_list):
     Outputs
     ----------
     cluster_dict: TypedDict of int64 : array (int64)
-        Each int is a column index corresponding to a
-        1D array of the number of indices within each cluster
-        in that column.
+        Each int is the coordinate of the first
+        index corresponding to a cluster in row m and
+        each 1D array contains the indices of the nested
+        clusters in row m + 1.
 
     '''
     cluster_dict = {}
@@ -497,27 +512,27 @@ def id_cluster_counts(unique_idx_list):
         value = np.empty(0, dtype=np.int64)
         for j in range(unique_idx_list[i-1].size):
             if j < unique_idx_list[i-1].size-1:
-                value = np.append(value,
-                                  len(unique_idx_list[i][(unique_idx_list[i] >=
-                                      unique_idx_list[i-1][j]) &
-                                      (unique_idx_list[i] <
-                                       unique_idx_list[i-1][j+1])]))
+                value = np.append(value, len(unique_idx_list[i]
+                                  [(unique_idx_list[i] >=
+                                    unique_idx_list[i-1][j]) &
+                                  (unique_idx_list[i] <
+                                   unique_idx_list[i-1][j+1])]))
             else:
-                value = np.append(value,
-                                  len(unique_idx_list[i]
-                                      [(unique_idx_list[i] >=
-                                        unique_idx_list[i-1][j])]))
+                value = np.append(value, len(unique_idx_list[i]
+                                  [(unique_idx_list[i] >=
+                                    unique_idx_list[i-1][j])]))
 
         cluster_dict[i] = value
     return cluster_dict
 
 
 @nb.njit
-def nb_reweighter(data, columns_to_resample, clusternum_dict, start, shape):
+def nb_reweighter(data, columns_to_resample, clusternum_dict,
+                  start, shape, indexes=True):
     out = data.astype(np.float64)
-    weights = np.array([1 for i in clusternum_dict[start+1]])
+    weights = np.array([1 for i in clusternum_dict[start]])
 
-    for key in range(start+1, shape):
+    for key in range(start, shape):
         new_weight = np.empty(0, np.int64)
         to_do = clusternum_dict[key]
 
@@ -534,17 +549,21 @@ def nb_reweighter(data, columns_to_resample, clusternum_dict, start, shape):
 
         weights = new_weight
 
-    out[:, -1] = out[:, -1] * weights
-    return out
+    if indexes is False:
+        out[:, -1] = out[:, -1] * weights
+        return out
+    else:
+        indexes = weights_to_index(weights)
+        return out[indexes]
 
 
 @nb.njit
 def nb_reweighter_real(data, columns_to_resample,
                        clusternum_dict, start, shape):
     out = data.astype(np.float64)
-    weights = np.array([1 for i in clusternum_dict[start+1]], dtype=np.float64)
+    weights = np.array([1 for i in clusternum_dict[start]], dtype=np.float64)
 
-    for key in range(start+1, shape):
+    for key in range(start, shape):
         new_weight = np.empty(0, np.float64)
         to_do = clusternum_dict[key]
 
@@ -565,6 +584,17 @@ def nb_reweighter_real(data, columns_to_resample,
 
     out[:, -1] = out[:, -1] * weights
     return out
+
+
+@nb.njit
+def weights_to_index(weights):
+    indexes = np.empty(weights.sum(), dtype=np.int64)
+    spot = 0
+    for i, v in enumerate(weights):
+        for j in range(v):
+            indexes[spot] = i
+            spot += 1
+    return indexes
 
 
 def mean_agg(data, ref='None', groupby=-3):
