@@ -2,7 +2,7 @@
 
 ## A Hierarchical Resampling Package for Python
 
-Version 0.2.0
+Version 0.2.1
 
 hierarch is a package for hierarchical resampling (bootstrapping, permutation) of datasets in Python. Because for loops are ultimately intrinsic to cluster-aware resampling, hierarch uses Numba to accelerate many of its key functions.
 
@@ -120,8 +120,12 @@ print('p-value =', p_val)
 ```
 There are a number of parameters that can be used to modify two_sample_test.
 
-```
-ha.stats.two_sample_test(data_array, treatment_col, teststat="welch", skip=[], bootstraps=100, permutations=1000, return_null=False, seed=None)
+```python
+ha.stats.two_sample_test(data_array, treatment_col, 
+                         teststat="welch", skip=[], 
+                         bootstraps=100, permutations=1000, 
+                         kind = 'weights', return_null=False,
+                         seed=None)
 
 ```
 **teststat**: The default teststat of "welch" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. For flexibility, two_sample_test can take a test statistic function as an argument. 
@@ -137,6 +141,8 @@ Generally, as the number of possible permutations of your data increases, the nu
 **permutations**: indicates the number of permutations of the treatment label PER bootstrapped sample.
 
 Inputting "all" will enumerate all of the possible permutations and iterate through them one by one. This is done using a generator, so the permutations are not stored in memory, but is still excessively time consuming for large datasets. 
+
+**kind**: "weights" or "indexes" or "bayesian" specifies the bootstrapping algorithm. "weights" returns an array the same size as the input array, but with the data reweighted according to the Efron bootstrap procedure. "indexes" uses the same algorithm, but returns a reindexed array. "bayesian" also returns a reweighted array, but the weights are allowed to be any real number rather than just integers.
 
 **return_null**: setting this to True will also return the empirical null distribution as a list.
 
