@@ -5,7 +5,7 @@ import pandas as pd
 assert numba_overloads
 
 
-@nb.njit
+@nb.jit(nopython=True, cache=True)
 def set_numba_random_state(seed):
     '''
     Helper function to set numba's RNG seed.
@@ -13,35 +13,10 @@ def set_numba_random_state(seed):
     Parameters
     ----------
 
-    seed: int
+    seed: int32
 
     '''
     np.random.seed(seed)
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_tuple(a, b):
-
-    '''
-
-    Makes a tuple from two numbers.
-
-
-    Parameters
-    ----------
-
-    a, b: numbers of the same dtype (or can be cast to the same dtype).
-
-
-    Returns
-    ----------
-
-    tuple(a, b)
-
-
-    '''
-
-    return tuple((a, b))
 
 
 @nb.jit(nopython=True, cache=True)
@@ -379,13 +354,13 @@ def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
 
             if idx < len(keys)-1:
 
-                np.random.shuffle(shuffled_col_values[keys[idx]:keys[idx+1]-1])
+                np.random.shuffle(shuffled_col_values[keys[idx]:keys[idx+1]])
 
             else:
 
                 np.random.shuffle(shuffled_col_values[keys[idx]:])
 
-    # check if the shuffled column needs to be duplicated to fit back
+    # check if the shuffled column needs to be repeated to fit back
     # into the original matrix
     if len(shuffled_col_values) < data.shape[0]:
 
@@ -398,93 +373,7 @@ def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
 
 
 @nb.jit(nopython=True, cache=True)
-def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict,
-                 randnos, start, shape):
-
-    '''
-
-    Internal function for shuffling a design matrix.
-
-
-    Parameters
-    ----------
-
-
-    resampled_idx: 1D array of ints
-
-        Indices of the unique rows of the design matrix up until the
-        first column that needs shuffling.
-
-
-    data: 2D array
-
-        The original data
-
-
-    columns_to_resample: 1D bool array
-
-        False for columns that do not need resampling.
-
-
-    cluster_dict: numba TypedDict
-
-        This function uses the cluster_dict to quickly grab the indices in the
-        column i+1 that correspond to a unique row in column i.
-
-
-    randnos: 1D array of ints
-
-        List of random numbers generated outside of numba to use for
-        resampling with replacement. Generating these outside of numba
-        is faster for now as numba np.random does not take the size argument.
-
-
-    start: int
-
-        First column of the data matrix to resample
-
-
-    shape: int
-
-        Last column of the data matrix to resample
-
-
-    Output
-    ----------
-
-
-    resampled: 2D array
-
-        Nested bootstrapped resample of the input data array
-
-
-
-    '''
-
-    rng_place = 0
-
-    for i in range(start+1, shape):
-        idx = np.empty(0, dtype=np.int64)
-
-        for key in resampled_idx:
-            idx_no = cluster_dict[nb_tuple(key, i)]
-
-            if not columns_to_resample[i]:
-                idx = np.hstack((idx, idx_no))
-            else:
-                idx_no = idx_no[randnos[rng_place:rng_place+idx_no.size]
-                                % idx_no.size]
-                idx_no.sort()
-                rng_place += idx_no.size
-                idx = np.hstack((idx, idx_no))
-
-        resampled_idx = idx
-    resampled = data[resampled_idx]
-    return resampled
-
-
-@nb.jit(nopython=True, cache=True)
-def id_cluster_counts(unique_idx_list):
+def id_cluster_counts(design):
     '''
     Constructs a Typed Dictionary from a tuple of arrays corresponding
     to number of values described by each cluster in a design matrix.
@@ -493,59 +382,97 @@ def id_cluster_counts(unique_idx_list):
 
     Parameters
     ----------
-    unique_idx_list: tuple of 1D arrays (ints64)
-        Tuple of arrays that identify the unique rows in
-        columns 0:0, 0:1, 0:n, where n is the final column
-        of the design matrix portion of the data.
+    design: 2D array
+        An array corresponding to a design matrix.
 
     Outputs
     ----------
     cluster_dict: TypedDict of int64 : array (int64)
-        Each int is the coordinate of the first
-        index corresponding to a cluster in row m and
-        each 1D array contains the indices of the nested
-        clusters in row m + 1.
+        Each int corresponds to a column and each array
+        contains the number of subclusters in each cluster
+        in that column.
 
     '''
     cluster_dict = {}
-    for i in range(1, len(unique_idx_list)):
-        value = np.empty(0, dtype=np.int64)
-        for j in range(unique_idx_list[i-1].size):
-            if j < unique_idx_list[i-1].size-1:
-                value = np.append(value, len(unique_idx_list[i]
-                                  [(unique_idx_list[i] >=
-                                    unique_idx_list[i-1][j]) &
-                                  (unique_idx_list[i] <
-                                   unique_idx_list[i-1][j+1])]))
-            else:
-                value = np.append(value, len(unique_idx_list[i]
-                                  [(unique_idx_list[i] >=
-                                    unique_idx_list[i-1][j])]))
-
-        cluster_dict[i] = value
+    to_analyze = design
+    for i in range(to_analyze.shape[1] - 1, -1, -1):
+        to_analyze, counts = nb_unique(to_analyze[:, :-1])[0::2]
+        cluster_dict[i] = counts
     return cluster_dict
 
 
-@nb.njit
+@nb.jit(nopython=True, cache=True)
 def nb_reweighter(data, columns_to_resample, clusternum_dict,
                   start, shape, indexes=True):
+    '''
+
+    Internal function for reweighting a design matrix with integer
+    weights.
+
+
+    Parameters
+    ----------
+
+    data: 2D array
+
+        The original data.
+
+    columns_to_resample: 1D bool array
+
+        False for columns that do not need resampling.
+
+    clusternum_dict: numba TypedDict
+
+        This function uses the cluster_dict to quickly grab the indices in the
+        column i+1 that correspond to a unique row in column i.
+
+    start: int
+
+        First column of the data matrix to resample
+
+    shape: int
+
+        Last column of the data matrix to resample
+
+    indexes: bool, default=True
+
+        If True, returns a reindexed array. If False, returns
+        a reweighted array.
+
+
+    Output
+    ----------
+
+    out: 2D array
+
+        Nested bootstrapped resample of the input data array
+
+
+    '''
+
     out = data.astype(np.float64)
     weights = np.array([1 for i in clusternum_dict[start]])
 
     for key in range(start, shape):
-        new_weight = np.empty(0, np.int64)
         to_do = clusternum_dict[key]
+        new_weight = np.empty(to_do.sum(), np.int64)
+        place = 0
 
         if not columns_to_resample[key]:
             for idx, v in enumerate(to_do):
                 num = np.array([1 for m in range(v.item())])
                 num *= weights[idx]
-                new_weight = np.append(new_weight, num)
+                for idx_2, w in enumerate(num):
+                    new_weight[place + idx_2] = w.item()
+                place += v
+
         else:
             for idx, v in enumerate(to_do):
                 num = v.item()
                 randos = np.random.multinomial(num*weights[idx], [1/num]*num)
-                new_weight = np.append(new_weight, randos)
+                for idx_2, w in enumerate(randos):
+                    new_weight[place + idx_2] = w.item()
+                place += v
 
         weights = new_weight
 
@@ -557,28 +484,71 @@ def nb_reweighter(data, columns_to_resample, clusternum_dict,
         return out[indexes]
 
 
-@nb.njit
+@nb.jit(nopython=True, cache=True)
 def nb_reweighter_real(data, columns_to_resample,
                        clusternum_dict, start, shape):
+    '''
+
+    Internal function for reweighting a design matrix with real
+    weights.
+
+
+    Parameters
+    ----------
+
+    data: 2D array
+
+        The original data.
+
+    columns_to_resample: 1D bool array
+
+        False for columns that do not need resampling.
+
+    clusternum_dict: numba TypedDict
+
+        This function uses the cluster_dict to quickly grab the indices in the
+        column i+1 that correspond to a unique row in column i.
+
+    start: int
+
+        First column of the data matrix to resample
+
+    shape: int
+
+        Last column of the data matrix to resample
+
+    Output
+    ----------
+
+    resampled: 2D array
+
+        Nested bootstrapped resample of the input data array
+
+    '''
     out = data.astype(np.float64)
     weights = np.array([1 for i in clusternum_dict[start]], dtype=np.float64)
 
     for key in range(start, shape):
-        new_weight = np.empty(0, np.float64)
         to_do = clusternum_dict[key]
+        new_weight = np.empty(to_do.sum(), np.float64)
+        place = 0
 
         if not columns_to_resample[key]:
             for idx, v in enumerate(to_do):
                 num = np.array([1 for m in range(v.item())], dtype=np.float64)
                 num *= weights[idx]
-                new_weight = np.append(new_weight, num)
+                for idx_2, w in enumerate(num):
+                    new_weight[place + idx_2] = w.item()
+                place += v
 
         else:
             for idx, v in enumerate(to_do):
                 num = [1 for a in range(v.item())]
-                randos = (np.random.dirichlet(num, size=1)
+                randos = (np.random.dirichlet(num, size=None)
                           * weights[idx] * v.item())
-                new_weight = np.append(new_weight, randos)
+                for idx_2, w in enumerate(randos):
+                    new_weight[place + idx_2] = w.item()
+                place += v
 
         weights = new_weight
 
@@ -586,8 +556,22 @@ def nb_reweighter_real(data, columns_to_resample,
     return out
 
 
-@nb.njit
+@nb.jit(nopython=True, cache=True)
 def weights_to_index(weights):
+
+    '''
+    Converts a 1D array of integer weights to indices.
+    Equivalent to np.array(list(range(n))).repeat(weights).
+
+    Parameters
+    ----------
+    weights: 1D array of ints
+
+    Returns
+    ----------
+    indexes: 1D array of ints
+
+    '''
     indexes = np.empty(weights.sum(), dtype=np.int64)
     spot = 0
     for i, v in enumerate(weights):
@@ -886,59 +870,6 @@ def make_ufunc_list(target, ref):
     return ufunc_list
 
 
-@nb.jit(nopython=True, cache=True)
-def id_clusters(unique_idx_list):
-
-    '''
-
-    Constructs a Typed Dictionary from a tuple of arrays corresponding to
-    unique cluster positions in a design matrix. Again, this indirectly
-    assumes that the design matrix is lexsorted starting from the last column.
-
-
-    Parameters
-    ----------
-
-    unique_idx_list: tuple of 1D arrays (ints64)
-
-        Tuple of arrays that identify the unique rows in columns 0:0, 0:1, 0:n,
-        where n is the final column of the design matrix portion of the data.
-
-
-    Outputs
-    ----------
-
-    cluster_dict: TypedDict of UniTuples (int64 x 2) : 1D array (int64)
-
-        Each tuple is the coordinate of the first index corresponding to a
-        cluster in row m and each 1D array contains the indices of the nested
-        clusters in row m + 1.
-
-
-    '''
-
-    cluster_dict = {}
-
-    for i in range(1, len(unique_idx_list)):
-
-        for j in range(unique_idx_list[i-1].size):
-
-            if j < unique_idx_list[i-1].size-1:
-
-                value = unique_idx_list[i][(unique_idx_list[i] >=
-                                            unique_idx_list[i-1][j]) & (
-                                                unique_idx_list[i] <
-                                                unique_idx_list[i-1][j+1])]
-
-            else:
-
-                value = unique_idx_list[i][(unique_idx_list[i] >=
-                                            unique_idx_list[i-1][j])]
-
-            cluster_dict[nb_tuple(unique_idx_list[i-1][j], i)] = value
-    return cluster_dict
-
-
 def preprocess_data(data):
 
     '''
@@ -1109,3 +1040,169 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
+
+
+# @nb.jit(nopython=True, cache=True)
+# def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict,
+#                  randnos, start, shape):
+
+#     '''
+
+#     Internal function for shuffling a design matrix.
+
+
+#     Parameters
+#     ----------
+
+
+#     resampled_idx: 1D array of ints
+
+#         Indices of the unique rows of the design matrix up until the
+#         first column that needs shuffling.
+
+
+#     data: 2D array
+
+#         The original data
+
+
+#     columns_to_resample: 1D bool array
+
+#         False for columns that do not need resampling.
+
+
+#     cluster_dict: numba TypedDict
+
+#         This function uses the cluster_dict to quickly grab the indices in
+#         the
+#         column i+1 that correspond to a unique row in column i.
+
+
+#     randnos: 1D array of ints
+
+#         List of random numbers generated outside of numba to use for
+#         resampling with replacement. Generating these outside of numba
+#         is faster for now as numba np.random does not take the size argument.
+
+
+#     start: int
+
+#         First column of the data matrix to resample
+
+
+#     shape: int
+
+#         Last column of the data matrix to resample
+
+
+#     Output
+#     ----------
+
+
+#     resampled: 2D array
+
+#         Nested bootstrapped resample of the input data array
+
+
+#     '''
+
+#     rng_place = 0
+
+#     for i in range(start+1, shape):
+#         idx = np.empty(0, dtype=np.int64)
+
+#         for key in resampled_idx:
+#             idx_no = cluster_dict[nb_tuple(key, i)]
+
+#             if not columns_to_resample[i]:
+#                 idx = np.hstack((idx, idx_no))
+#             else:
+#                 idx_no = idx_no[randnos[rng_place:rng_place+idx_no.size]
+#                                 % idx_no.size]
+#                 idx_no.sort()
+#                 rng_place += idx_no.size
+#                 idx = np.hstack((idx, idx_no))
+
+#         resampled_idx = idx
+#     resampled = data[resampled_idx]
+#     return resampled
+
+
+# @nb.jit(nopython=True, cache=True)
+# def nb_tuple(a, b):
+
+#     '''
+
+#     Makes a tuple from two numbers.
+
+
+#     Parameters
+#     ----------
+
+#     a, b: numbers of the same dtype (or can be cast to the same dtype).
+
+
+#     Returns
+#     ----------
+
+#     tuple(a, b)
+
+
+#     '''
+
+#     return tuple((a, b))
+
+
+# @nb.jit(nopython=True, cache=True)
+# def id_clusters(unique_idx_list):
+
+#     '''
+
+#     Constructs a Typed Dictionary from a tuple of arrays corresponding to
+#     unique cluster positions in a design matrix. Again, this indirectly
+#     assumes that the design matrix is lexsorted starting from the last
+#     column.
+
+
+#     Parameters
+#     ----------
+
+#     unique_idx_list: tuple of 1D arrays (ints64)
+
+#         Tuple of arrays that identify the unique rows in columns 0:0,
+#         0:1, 0:n,
+#         where n is the final column of the design matrix portion of the data.
+
+
+#     Outputs
+#     ----------
+
+#     cluster_dict: TypedDict of UniTuples (int64 x 2) : 1D array (int64)
+
+#         Each tuple is the coordinate of the first index corresponding to a
+#         cluster in row m and each 1D array contains the indices of the nested
+#         clusters in row m + 1.
+
+
+#     '''
+
+#     cluster_dict = {}
+
+#     for i in range(1, len(unique_idx_list)):
+
+#         for j in range(unique_idx_list[i-1].size):
+
+#             if j < unique_idx_list[i-1].size-1:
+
+#                 value = unique_idx_list[i][(unique_idx_list[i] >=
+#                                             unique_idx_list[i-1][j]) & (
+#                                                 unique_idx_list[i] <
+#                                                 unique_idx_list[i-1][j+1])]
+
+#             else:
+
+#                 value = unique_idx_list[i][(unique_idx_list[i] >=
+#                                             unique_idx_list[i-1][j])]
+
+#             cluster_dict[nb_tuple(unique_idx_list[i-1][j], i)] = value
+#     return cluster_dict

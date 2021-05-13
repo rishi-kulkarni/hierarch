@@ -2,6 +2,7 @@ import numpy as np
 import math
 import hierarch.internal_functions as internal_functions
 from hierarch.internal_functions import GroupbyMean
+from hierarch.internal_functions import welch_statistic, preprocess_data
 from hierarch.resampling import Bootstrapper, Permuter
 import sympy.utilities.iterables as iterables
 
@@ -40,6 +41,10 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
         Number of permutations to perform PER bootstrap sample. "all"
         for exact test.
 
+    kind: str = "weights" or "bayesian" or "indexes"
+        Specifies the bootstrapping algorithm. See Bootstrapper class
+        for details.
+
     return_null: bool
         Set to true to return the null distribution as well as the p value.
 
@@ -57,7 +62,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     '''
 
     # turns the input array or dataframe into a float64 array
-    data = internal_functions.preprocess_data(data_array)
+    data = preprocess_data(data_array)
 
     # set random state
     rng = np.random.default_rng(seed)
@@ -75,7 +80,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
 
     # shorthand for welch_statistic
     if teststat == "welch":
-        teststat = internal_functions.welch_statistic
+        teststat = welch_statistic
 
     # aggregate our data up to the treated level and determine the
     # observed test statistic
@@ -90,7 +95,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     truediff = teststat(test, treatment_col, treatment_labels)
 
     # initialize and fit the permuter to the aggregated data
-    # don't need to seed this, as numba does not have individual generators yet
+    # don't need to seed this, as numba's PRNG state is shared
     permuter = Permuter()
 
     if permutations == "all":

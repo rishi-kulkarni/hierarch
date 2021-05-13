@@ -58,14 +58,14 @@ class Bootstrapper:
     '''
     def __init__(self, random_state=None, kind='weights'):
         self.random_generator = np.random.default_rng(random_state)
-        nb_seed = self.random_generator.integers(low=2**32)
+        # this is a bit hacky, but we use the numpy generator to seed Numba
+        # this makes it both reproducible and thread-safe enough
+        nb_seed = self.random_generator.integers(low=2**32 - 1)
         set_numba_random_state(nb_seed)
         self.kind = kind
 
     def fit(self, data, skip=[], y=-1):
-        self.unique_idx_list = unique_idx_w_cache(data)
-        self.cluster_dict = id_cluster_counts(
-                            tuple(self.unique_idx_list))
+        self.cluster_dict = id_cluster_counts(data[:, :y])
         if y < 0:
             self.shape = data.shape[1] + y
         else:
@@ -119,8 +119,11 @@ class Permuter:
 
     '''
 
-    def __init__(self):
-        pass
+    def __init__(self, random_state=None):
+        self.random_generator = np.random.default_rng(random_state)
+        if random_state is not None:
+            nb_seed = self.random_generator.integers(low=2**32)
+            set_numba_random_state(nb_seed)
 
     def fit(self, data, col_to_permute, exact=False):
         self.values, self.indexes, self.counts = np.unique(
