@@ -52,8 +52,8 @@ def nb_data_grabber(data, col, treatment_labels):
     for key in treatment_labels:
 
         # grab values from the data column for each label
-
         ret_list.append(data[:, -1][np.equal(data[:, col], key)])
+
     return ret_list
 
 
@@ -396,6 +396,8 @@ def id_cluster_counts(design):
     cluster_dict = {}
     to_analyze = design
     for i in range(to_analyze.shape[1] - 1, -1, -1):
+        # equivalent to np.unique(to_analyze[:,:-1],
+        # return_counts=True, axis=0)
         to_analyze, counts = nb_unique(to_analyze[:, :-1])[0::2]
         cluster_dict[i] = counts
     return cluster_dict
@@ -451,24 +453,31 @@ def nb_reweighter(data, columns_to_resample, clusternum_dict,
     '''
 
     out = data.astype(np.float64)
+    # at the start, everything is weighted equally
     weights = np.array([1 for i in clusternum_dict[start]])
 
     for key in range(start, shape):
+        # fetch design matrix info for current column
         to_do = clusternum_dict[key]
+        # preallocate the full array for new_weight
         new_weight = np.empty(to_do.sum(), np.int64)
         place = 0
 
+        # if not resampling this column, new_weight is all 1
         if not columns_to_resample[key]:
             for idx, v in enumerate(to_do):
                 num = np.array([1 for m in range(v.item())])
+                # carry over resampled weights from previous columns
                 num *= weights[idx]
                 for idx_2, w in enumerate(num):
                     new_weight[place + idx_2] = w.item()
                 place += v
 
+        # else do a multinomial experiment to generate new_weight
         else:
             for idx, v in enumerate(to_do):
                 num = v.item()
+                # num*weights[idx] carries over weights from previous columns
                 randos = np.random.multinomial(num*weights[idx], [1/num]*num)
                 for idx_2, w in enumerate(randos):
                     new_weight[place + idx_2] = w.item()
@@ -526,13 +535,18 @@ def nb_reweighter_real(data, columns_to_resample,
 
     '''
     out = data.astype(np.float64)
+    # at the start, everything is weighted equally
+    # dype is float64 because weights can be any real number
     weights = np.array([1 for i in clusternum_dict[start]], dtype=np.float64)
 
     for key in range(start, shape):
+        # fetch design matrix info for current column
         to_do = clusternum_dict[key]
+        # preallocate the full array for new_weight
         new_weight = np.empty(to_do.sum(), np.float64)
         place = 0
 
+        # if not resampling this column, new_weight is all 1
         if not columns_to_resample[key]:
             for idx, v in enumerate(to_do):
                 num = np.array([1 for m in range(v.item())], dtype=np.float64)
@@ -541,9 +555,11 @@ def nb_reweighter_real(data, columns_to_resample,
                     new_weight[place + idx_2] = w.item()
                 place += v
 
+        # else do a dirichlet experiment to generate new_weight
         else:
             for idx, v in enumerate(to_do):
                 num = [1 for a in range(v.item())]
+                # multiplying by weights[idx] carries over prior columns
                 randos = (np.random.dirichlet(num, size=None)
                           * weights[idx] * v.item())
                 for idx_2, w in enumerate(randos):
@@ -827,7 +843,6 @@ def make_ufunc_list(target, ref):
     Parameters
     ----------
 
-
     target: 2D array, float64
 
         Array that the groupby-aggregate operation will be performed on.
@@ -840,7 +855,6 @@ def make_ufunc_list(target, ref):
 
     Output
     ----------
-
 
     ufunc_list: 1D array of ints
 
@@ -895,34 +909,33 @@ def preprocess_data(data):
 
 
     '''
-
+    # don't want to overwrite data
     if isinstance(data, np.ndarray):
 
         encoded = data.copy()
 
+    # coerce dataframe to numpy array
     elif isinstance(data, pd.DataFrame):
 
         encoded = data.to_numpy()
 
     for idx, v in enumerate(encoded.T):
-
+        # attempt to cast array as floats
         try:
-
             encoded = encoded.astype(np.float64)
-
+            # if we can cast the array as floats, encoding is complete
             break
 
         except ValueError:
-
+            # if we can't, attempt to cast one column as floats
             try:
-
                 encoded[:, idx] = encoded[:, idx].astype(np.float64)
-
+            # if we still can't, encode that column
             except ValueError:
-
                 encoded[:, idx] = np.unique(v, return_inverse=True)[1]
-
+    # stable sort sort the output by row
     encoded = np.unique(encoded, axis=0)
+
     return encoded
 
 
@@ -1040,169 +1053,3 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
-
-
-# @nb.jit(nopython=True, cache=True)
-# def nb_reindexer(resampled_idx, data, columns_to_resample, cluster_dict,
-#                  randnos, start, shape):
-
-#     '''
-
-#     Internal function for shuffling a design matrix.
-
-
-#     Parameters
-#     ----------
-
-
-#     resampled_idx: 1D array of ints
-
-#         Indices of the unique rows of the design matrix up until the
-#         first column that needs shuffling.
-
-
-#     data: 2D array
-
-#         The original data
-
-
-#     columns_to_resample: 1D bool array
-
-#         False for columns that do not need resampling.
-
-
-#     cluster_dict: numba TypedDict
-
-#         This function uses the cluster_dict to quickly grab the indices in
-#         the
-#         column i+1 that correspond to a unique row in column i.
-
-
-#     randnos: 1D array of ints
-
-#         List of random numbers generated outside of numba to use for
-#         resampling with replacement. Generating these outside of numba
-#         is faster for now as numba np.random does not take the size argument.
-
-
-#     start: int
-
-#         First column of the data matrix to resample
-
-
-#     shape: int
-
-#         Last column of the data matrix to resample
-
-
-#     Output
-#     ----------
-
-
-#     resampled: 2D array
-
-#         Nested bootstrapped resample of the input data array
-
-
-#     '''
-
-#     rng_place = 0
-
-#     for i in range(start+1, shape):
-#         idx = np.empty(0, dtype=np.int64)
-
-#         for key in resampled_idx:
-#             idx_no = cluster_dict[nb_tuple(key, i)]
-
-#             if not columns_to_resample[i]:
-#                 idx = np.hstack((idx, idx_no))
-#             else:
-#                 idx_no = idx_no[randnos[rng_place:rng_place+idx_no.size]
-#                                 % idx_no.size]
-#                 idx_no.sort()
-#                 rng_place += idx_no.size
-#                 idx = np.hstack((idx, idx_no))
-
-#         resampled_idx = idx
-#     resampled = data[resampled_idx]
-#     return resampled
-
-
-# @nb.jit(nopython=True, cache=True)
-# def nb_tuple(a, b):
-
-#     '''
-
-#     Makes a tuple from two numbers.
-
-
-#     Parameters
-#     ----------
-
-#     a, b: numbers of the same dtype (or can be cast to the same dtype).
-
-
-#     Returns
-#     ----------
-
-#     tuple(a, b)
-
-
-#     '''
-
-#     return tuple((a, b))
-
-
-# @nb.jit(nopython=True, cache=True)
-# def id_clusters(unique_idx_list):
-
-#     '''
-
-#     Constructs a Typed Dictionary from a tuple of arrays corresponding to
-#     unique cluster positions in a design matrix. Again, this indirectly
-#     assumes that the design matrix is lexsorted starting from the last
-#     column.
-
-
-#     Parameters
-#     ----------
-
-#     unique_idx_list: tuple of 1D arrays (ints64)
-
-#         Tuple of arrays that identify the unique rows in columns 0:0,
-#         0:1, 0:n,
-#         where n is the final column of the design matrix portion of the data.
-
-
-#     Outputs
-#     ----------
-
-#     cluster_dict: TypedDict of UniTuples (int64 x 2) : 1D array (int64)
-
-#         Each tuple is the coordinate of the first index corresponding to a
-#         cluster in row m and each 1D array contains the indices of the nested
-#         clusters in row m + 1.
-
-
-#     '''
-
-#     cluster_dict = {}
-
-#     for i in range(1, len(unique_idx_list)):
-
-#         for j in range(unique_idx_list[i-1].size):
-
-#             if j < unique_idx_list[i-1].size-1:
-
-#                 value = unique_idx_list[i][(unique_idx_list[i] >=
-#                                             unique_idx_list[i-1][j]) & (
-#                                                 unique_idx_list[i] <
-#                                                 unique_idx_list[i-1][j+1])]
-
-#             else:
-
-#                 value = unique_idx_list[i][(unique_idx_list[i] >=
-#                                             unique_idx_list[i-1][j])]
-
-#             cluster_dict[nb_tuple(unique_idx_list[i-1][j], i)] = value
-#     return cluster_dict
