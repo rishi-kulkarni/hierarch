@@ -3,7 +3,7 @@ import setuptools
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
-setuptools.setup(nam="hierarch",
+setuptools.setup(name="hierarch",
                  version="0.2.1",
 
                  author="Rishi Kulkarni",
