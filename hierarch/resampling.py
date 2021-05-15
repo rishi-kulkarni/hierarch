@@ -66,10 +66,9 @@ class Bootstrapper:
 
     def fit(self, data, skip=[], y=-1):
         self.cluster_dict = id_cluster_counts(data[:, :y])
-        if y < 0:
-            self.shape = data.shape[1] + y
-        else:
-            self.shape = y - 1
+        y %= data.shape[1]
+        self.shape = y
+
         self.columns_to_resample = np.array([True for k in range(self.shape)])
         for key in skip:
             self.columns_to_resample[key] = False

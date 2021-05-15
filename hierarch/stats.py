@@ -193,3 +193,53 @@ def binomial(x, y):
         return math.factorial(x) // math.factorial(y) // math.factorial(x - y)
     except ValueError:
         return 0
+
+
+def _false_discovery_adjust(pvals, return_index=False):
+    '''
+    Performs the Benjamini-Hochberg method to control false discovery rate.
+
+    Parameters
+    ----------
+    pvals: 1D array-like
+        p-values to be adjusted
+
+    return_index: bool, default=False
+        If true, will return the indices to sort the original p-value list.
+
+    Returns
+    ----------
+    q_vals: 1D array
+        q-values, or "adjusted" p-values.
+
+    sort_key: 1D array
+        indices to sort pvals
+
+    Notes
+    ----------
+    Refererence: Benjamini, Y. & Hochberg, Y. Controlling the false discovery
+    rate: a practical and powerful approach to multiple testing.
+    Journal of the Royal Statistical Society.
+    Series B (Methodological) 289–300 (1995).
+
+    The q-values, or "adjusted p-values," are not really p-values and should
+    not be interpreted as such. Rather, each q-value is the minimum FDR you
+    must accept to regard the result of that hypothesis test significant.
+    However, q-values are often called adjusted p-values in practice, so
+    we do so here.
+    '''
+    # argsort so we can sort a list of hypotheses, if need be
+    sort_key = np.argsort(pvals)
+    # q-value adjustment
+    q_vals = np.array(pvals)[sort_key] * len(pvals)
+    q_vals /= np.array(range(1, len(pvals)+1))
+
+    # list of q values must be strictly non-decreasing
+    for i in range(len(q_vals)-1, 0, -1):
+        if q_vals[i] < q_vals[i-1]:
+            q_vals[i-1] = q_vals[i]
+
+    if return_index is True:
+        return q_vals, sort_key
+    else:
+        return q_vals
