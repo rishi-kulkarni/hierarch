@@ -1,10 +1,11 @@
 import numpy as np
 import math
-import hierarch.internal_functions as internal_functions
+from itertools import combinations
+import pandas as pd
 from hierarch.internal_functions import GroupbyMean
 from hierarch.internal_functions import welch_statistic, preprocess_data
 from hierarch.resampling import Bootstrapper, Permuter
-import sympy.utilities.iterables as iterables
+from warnings import warn, simplefilter
 
 
 def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
@@ -67,6 +68,14 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     # set random state
     rng = np.random.default_rng(seed)
 
+    # enforce bounds on skip
+    for v in reversed(skip):
+        if v <= treatment_col+1:
+            warn('No need to include columns before treated columns in skip.')
+            skip.remove(v)
+        if v >= data.shape[1] - 1:
+            raise IndexError('skip index out of bounds for this array.')
+
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip)
@@ -87,11 +96,18 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     aggregator = GroupbyMean()
     aggregator.fit(data)
 
+    # determine the number of groupby reductions need to be done
     levels_to_agg = data.shape[1] - treatment_col - 3
+
+    # if levels_to_agg = 0, there are no bootstrap samples to
+    # generate.
+    if (levels_to_agg - len(skip)) == 0 and bootstraps > 1:
+        bootstraps = 1
+        simplefilter("always", UserWarning)
+        warn('No levels to bootstrap. Setting bootstraps to zero.')
+
     test = data
-
     test = aggregator.transform(test, iterations=levels_to_agg)
-
     truediff = teststat(test, treatment_col, treatment_labels)
 
     # initialize and fit the permuter to the aggregated data
@@ -112,6 +128,17 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
 
     # initialize empty null distribution list
     null_distribution = []
+
+    # first set of permutations is on the original data
+    # this helps to prevent getting a p-value of 0
+    for k in range(permutations):
+        permute_resample = permuter.transform(test)
+        null_distribution.append(teststat(permute_resample,
+                                          treatment_col,
+                                          treatment_labels))
+
+    # already did one set of permutations
+    bootstraps -= 1
 
     for j in range(bootstraps):
         # generate a bootstrapped sample and aggregate it up to the
@@ -140,52 +167,134 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
         return pval
 
 
-def two_sample_test_jackknife(data, treatment_col, permutations='all',
-                              teststat='welch'):
+def multi_sample_test(data_array, treatment_col, hypotheses='all',
+                      correction='fdr', teststat='welch', skip=[],
+                      bootstraps=100, permutations=1000, kind='weights',
+                      seed=None):
+    '''
+    Two-tailed multiple-sample hierarchical permutation test. Equivalent to a
+    post-hoc test after ANOVA. Results are more interpetable when the input
+    data is in the form of a pandas dataframe.
 
-    treatment_labels = np.unique(data[:, treatment_col])
-    if treatment_labels.size != 2:
-        raise Exception("Needs 2 samples.")
+    Parameters
+    -----------
+    data_array: 2D array or pandas DataFrame
+        Array-like containing both the independent and dependent variables to
+        be analyzed. It's assumed that the final (rightmost) column
+        contains the dependent variable values.
 
-    if teststat == "welch":
-        teststat = internal_functions.welch_statistic
+    treatment_col: int
+        The index number of the column containing labels to be compared.
+        Indexing starts at 0.
 
-    means = []
+    hypotheses: 'all' or list of two-element lists
+        Hypotheses to be tested. If 'all' every pairwise comparison will be
+        tested. Can be passed a list of lists to restrict comparisons, which
+        will result in a less harsh multiple comparisons correction.
 
-    levels_to_agg = data.shape[1] - treatment_col - 3
-    test = internal_functions.mean_agg(data)
-    for m in range(levels_to_agg - 1):
-        test = internal_functions.mean_agg(test)
+    correction: 'fdr' or 'none'
+        Multiple comparisons question to be performed after p-values are
+        calculated. 'fdr' performs the Benjamini-Hochberg procedure for
+        controlling False Discovery Rate.
 
-    truediff = np.abs(teststat(test[test[:, treatment_col] ==
-                               treatment_labels[0]][:, -1],
-                               test[test[:, treatment_col] ==
-                               treatment_labels[1]][:, -1]))
+    teststat: function or string
+        The test statistic to use to perform the hypothesis test. "Welch"
+        automatically calls the Welch t-statistic for a
+        difference of means test.
 
-    pre_colu_values = data[:, 0][internal_functions.nb_unique(data[:, :2])[1]]
-    it_list = list(internal_functions.msp(pre_colu_values))
+    skip: list of ints
+        Columns to skip in the bootstrap. Skip columns that were sampled
+        without replacement from the prior column.
 
-    for indexes in iterables.cartes(*np.split(
-            internal_functions.nb_unique(data[:, :-1])[1],
-            internal_functions.nb_unique(data[:, :-2])[1])[1:]):
+    bootstraps: int
+        Number of bootstraps to perform.
 
-        jacknifed = np.delete(data, indexes, axis=0)
-        jacknifed = internal_functions.mean_agg(jacknifed)
+    permutations: int or "all"
+        Number of permutations to perform PER bootstrap sample. "all"
+        for exact test.
 
-        for shuffle in it_list:
-            permute_resample = internal_functions.permute_column(jacknifed,
-                                                                 1, shuffle)
+    kind: str = "weights" or "bayesian" or "indexes"
+        Specifies the bootstrapping algorithm. See Bootstrapper class
+        for details.
 
-            means.append(teststat(
-                permute_resample[permute_resample[:, treatment_col]
-                                 == treatment_labels[0]][:, -1],
-                permute_resample[permute_resample[:, treatment_col]
-                                 == treatment_labels[1]][:, -1]))
+    seed: int or numpy random Generator
+        Seedable for reproducibility.
 
-    pval = (np.where((np.array(np.abs(means)) >= np.abs(truediff)))[0].size /
-            len(means))
+    Returns
+    ---------
+    pval: float64
+        Two-tailed p-value.
 
-    return pval
+    '''
+    seed = np.random.default_rng(seed)
+
+    # if list of comparisons has been provided, make an array for output
+    if isinstance(hypotheses, list):
+        hypotheses = np.array(hypotheses, dtype='object')
+        output = np.empty((hypotheses.shape[0], hypotheses.shape[1] + 1),
+                          dtype="object")
+        output[:, :-1] = hypotheses
+    # otherwise, enumerate all possible comparisons and make output array
+    else:
+        output = _get_comparisons(data_array, treatment_col)
+
+    # coerce data into an object array
+    if isinstance(data_array, pd.DataFrame):
+        data = data_array.to_numpy()
+    else:
+        data = data_array
+
+    # perform a two_sample_test for each comparison
+    # no option to return null distributions because that would be a hassle
+    for i in range(len(output)):
+        test_idx = np.logical_or((data[:, 1] == output[i, 0]),
+                                 (data[:, 1] == output[i, 1]))
+        output[i, 2] = two_sample_test(data[test_idx], treatment_col,
+                                       teststat, skip, bootstraps,
+                                       permutations, kind, seed=seed)
+
+    # sort the output array so that smallest p-values are on top
+    ordered_idx = output[:, -1].argsort()
+    output = output[ordered_idx]
+
+    # perform multiple comparisons correction, if any
+    if correction == 'fdr':
+        q_vals = _false_discovery_adjust(output[:, -1])
+        out = np.empty((output.shape[0], output.shape[1] + 1), dtype="object")
+        out[:, :-1] = output
+        out[:, -1] = q_vals
+        output = out
+
+    return output
+
+
+def _get_comparisons(data, treatment_col):
+    '''
+    Generates a list of pairwise comparisons for a k-sample test.
+
+    Parameters
+    ----------
+    data: 2D array or pd.DataFrame
+
+    treatment_col: int
+        The column of interest
+
+    Returns
+    ----------
+    comparisons: list of lists
+        list of two-member lists containing each comparison
+
+    '''
+    if isinstance(data, pd.DataFrame):
+        data = data.to_numpy()
+    comparisons = []
+    for i, j in combinations(np.unique(data[:, treatment_col]), 2):
+        comparisons.append([i, j])
+    comparisons = np.array(comparisons, dtype='object')
+    out = np.empty((comparisons.shape[0], comparisons.shape[1] + 1),
+                   dtype="object")
+    out[:, :-1] = comparisons
+    return out
 
 
 def binomial(x, y):
