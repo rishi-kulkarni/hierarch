@@ -7,7 +7,7 @@ from hierarch.internal_functions import iter_return, randomized_return
 
 
 class Bootstrapper:
-    '''
+    """
     Nested bootstrapping class.
 
     Methods
@@ -55,12 +55,13 @@ class Bootstrapper:
         Generate a bootstrapped sample from data. start indicates the last
         column in the array that should not be resampled.
 
-    '''
-    def __init__(self, random_state=None, kind='weights'):
+    """
+
+    def __init__(self, random_state=None, kind="weights"):
         self.random_generator = np.random.default_rng(random_state)
         # this is a bit hacky, but we use the numpy generator to seed Numba
         # this makes it both reproducible and thread-safe enough
-        nb_seed = self.random_generator.integers(low=2**32 - 1)
+        nb_seed = self.random_generator.integers(low=2 ** 32 - 1)
         set_numba_random_state(nb_seed)
         self.kind = kind
 
@@ -74,19 +75,29 @@ class Bootstrapper:
             self.columns_to_resample[key] = False
 
     def transform(self, data, start=1):
-        if self.kind == 'weights':
-            resampled = nb_reweighter(data, self.columns_to_resample,
-                                      self.cluster_dict, start,
-                                      self.shape, indexes=False)
-        elif self.kind == 'indexes':
-            resampled = nb_reweighter(data, self.columns_to_resample,
-                                      self.cluster_dict, start,
-                                      self.shape, indexes=True)
+        if self.kind == "weights":
+            resampled = nb_reweighter(
+                data,
+                self.columns_to_resample,
+                self.cluster_dict,
+                start,
+                self.shape,
+                indexes=False,
+            )
+        elif self.kind == "indexes":
+            resampled = nb_reweighter(
+                data,
+                self.columns_to_resample,
+                self.cluster_dict,
+                start,
+                self.shape,
+                indexes=True,
+            )
 
-        elif self.kind == 'bayesian':
-            resampled = nb_reweighter_real(data, self.columns_to_resample,
-                                           self.cluster_dict, start,
-                                           self.shape)
+        elif self.kind == "bayesian":
+            resampled = nb_reweighter_real(
+                data, self.columns_to_resample, self.cluster_dict, start, self.shape
+            )
         else:
             raise ValueError('invalid "kind" argument!')
         return resampled
@@ -94,7 +105,7 @@ class Bootstrapper:
 
 class Permuter:
 
-    '''
+    """
     Cluster permutation class.
 
     Methods
@@ -116,18 +127,18 @@ class Permuter:
         always be generated in a deterministic order, otherwise
         they will be random.
 
-    '''
+    """
 
     def __init__(self, random_state=None):
         self.random_generator = np.random.default_rng(random_state)
         if random_state is not None:
-            nb_seed = self.random_generator.integers(low=2**32)
+            nb_seed = self.random_generator.integers(low=2 ** 32)
             set_numba_random_state(nb_seed)
 
     def fit(self, data, col_to_permute, exact=False):
         self.values, self.indexes, self.counts = np.unique(
-            data[:, :col_to_permute+1], return_index=True,
-            return_counts=True, axis=0)
+            data[:, : col_to_permute + 1], return_index=True, return_counts=True, axis=0
+        )
         self.col_to_permute = col_to_permute
         self.exact = exact
 
@@ -142,16 +153,18 @@ class Permuter:
             self.iterator = cycle(msp(col_values))
 
         else:
-            self.shuffled_col_values = (data[:, self.col_to_permute-1]
-                                        [self.indexes])
+            self.shuffled_col_values = data[:, self.col_to_permute - 1][self.indexes]
 
     def transform(self, data):
         if self.exact is False:
-            randomized_return(data, self.col_to_permute,
-                              self.shuffled_col_values, self.keys,
-                              self.counts)
+            randomized_return(
+                data,
+                self.col_to_permute,
+                self.shuffled_col_values,
+                self.keys,
+                self.counts,
+            )
         else:
             next_iter = next(self.iterator)
-            iter_return(data, self.col_to_permute,
-                        tuple(next_iter), self.counts)
+            iter_return(data, self.col_to_permute, tuple(next_iter), self.counts)
         return data

@@ -8,11 +8,19 @@ from hierarch.resampling import Bootstrapper, Permuter
 from warnings import warn, simplefilter
 
 
-def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
-                    bootstraps=100, permutations=1000, kind='weights',
-                    return_null=False, seed=None):
+def two_sample_test(
+    data_array,
+    treatment_col,
+    teststat="welch",
+    skip=[],
+    bootstraps=100,
+    permutations=1000,
+    kind="weights",
+    return_null=False,
+    seed=None,
+):
 
-    '''
+    """
     Two-tailed two-sample hierarchical permutation test.
 
     Parameters
@@ -60,7 +68,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     null_distribution: list of floats
         The empirical null distribution used to calculate the p-value.
 
-    '''
+    """
 
     # turns the input array or dataframe into a float64 array
     data = preprocess_data(data_array)
@@ -70,11 +78,11 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
 
     # enforce bounds on skip
     for v in reversed(skip):
-        if v <= treatment_col+1:
-            warn('No need to include columns before treated columns in skip.')
+        if v <= treatment_col + 1:
+            warn("No need to include columns before treated columns in skip.")
             skip.remove(v)
         if v >= data.shape[1] - 1:
-            raise IndexError('skip index out of bounds for this array.')
+            raise IndexError("skip index out of bounds for this array.")
 
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
@@ -104,7 +112,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     if (levels_to_agg - len(skip)) == 0 and bootstraps > 1:
         bootstraps = 1
         simplefilter("always", UserWarning)
-        warn('No levels to bootstrap. Setting bootstraps to zero.')
+        warn("No levels to bootstrap. Setting bootstraps to zero.")
 
     test = data
     test = aggregator.transform(test, iterations=levels_to_agg)
@@ -115,7 +123,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     permuter = Permuter()
 
     if permutations == "all":
-        permuter.fit(test, treatment_col+1, exact=True)
+        permuter.fit(test, treatment_col + 1, exact=True)
 
         # in the exact case, determine and set the total number of
         # possible permutations
@@ -124,7 +132,7 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
 
     else:
         # just fit the permuter if this is a randomized test
-        permuter.fit(test, treatment_col+1)
+        permuter.fit(test, treatment_col + 1)
 
     # initialize empty null distribution list
     null_distribution = []
@@ -133,9 +141,9 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     # this helps to prevent getting a p-value of 0
     for k in range(permutations):
         permute_resample = permuter.transform(test)
-        null_distribution.append(teststat(permute_resample,
-                                          treatment_col,
-                                          treatment_labels))
+        null_distribution.append(
+            teststat(permute_resample, treatment_col, treatment_labels)
+        )
 
     # already did one set of permutations
     bootstraps -= 1
@@ -143,22 +151,24 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
     for j in range(bootstraps):
         # generate a bootstrapped sample and aggregate it up to the
         # treated level
-        bootstrapped_sample = bootstrapper.transform(data,
-                                                     start=treatment_col+2)
-        bootstrapped_sample = aggregator.transform(bootstrapped_sample,
-                                                   iterations=levels_to_agg)
+        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
+        bootstrapped_sample = aggregator.transform(
+            bootstrapped_sample, iterations=levels_to_agg
+        )
 
         # generate permuted samples, calculate test statistic,
         # append to null distribution
         for k in range(permutations):
             permute_resample = permuter.transform(bootstrapped_sample)
-            null_distribution.append(teststat(permute_resample,
-                                     treatment_col, treatment_labels))
+            null_distribution.append(
+                teststat(permute_resample, treatment_col, treatment_labels)
+            )
 
     # two tailed test, so check where absolute values of the null distribution
     # are greater or equal to the absolute value of the observed difference
-    pval = np.where((np.array(np.abs(null_distribution)) >=
-                     np.abs(truediff)))[0].size / len(null_distribution)
+    pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
+        0
+    ].size / len(null_distribution)
 
     if return_null is True:
         return pval, null_distribution
@@ -167,11 +177,19 @@ def two_sample_test(data_array, treatment_col, teststat="welch", skip=[],
         return pval
 
 
-def multi_sample_test(data_array, treatment_col, hypotheses='all',
-                      correction='fdr', teststat='welch', skip=[],
-                      bootstraps=100, permutations=1000, kind='weights',
-                      seed=None):
-    '''
+def multi_sample_test(
+    data_array,
+    treatment_col,
+    hypotheses="all",
+    correction="fdr",
+    teststat="welch",
+    skip=[],
+    bootstraps=100,
+    permutations=1000,
+    kind="weights",
+    seed=None,
+):
+    """
     Two-tailed multiple-sample hierarchical permutation test. Equivalent to a
     post-hoc test after ANOVA. Results are more interpetable when the input
     data is in the form of a pandas dataframe.
@@ -225,14 +243,15 @@ def multi_sample_test(data_array, treatment_col, hypotheses='all',
     pval: float64
         Two-tailed p-value.
 
-    '''
+    """
     seed = np.random.default_rng(seed)
 
     # if list of comparisons has been provided, make an array for output
     if isinstance(hypotheses, list):
-        hypotheses = np.array(hypotheses, dtype='object')
-        output = np.empty((hypotheses.shape[0], hypotheses.shape[1] + 1),
-                          dtype="object")
+        hypotheses = np.array(hypotheses, dtype="object")
+        output = np.empty(
+            (hypotheses.shape[0], hypotheses.shape[1] + 1), dtype="object"
+        )
         output[:, :-1] = hypotheses
     # otherwise, enumerate all possible comparisons and make output array
     else:
@@ -247,18 +266,26 @@ def multi_sample_test(data_array, treatment_col, hypotheses='all',
     # perform a two_sample_test for each comparison
     # no option to return null distributions because that would be a hassle
     for i in range(len(output)):
-        test_idx = np.logical_or((data[:, 1] == output[i, 0]),
-                                 (data[:, 1] == output[i, 1]))
-        output[i, 2] = two_sample_test(data[test_idx], treatment_col,
-                                       teststat, skip, bootstraps,
-                                       permutations, kind, seed=seed)
+        test_idx = np.logical_or(
+            (data[:, 1] == output[i, 0]), (data[:, 1] == output[i, 1])
+        )
+        output[i, 2] = two_sample_test(
+            data[test_idx],
+            treatment_col,
+            teststat,
+            skip,
+            bootstraps,
+            permutations,
+            kind,
+            seed=seed,
+        )
 
     # sort the output array so that smallest p-values are on top
     ordered_idx = output[:, -1].argsort()
     output = output[ordered_idx]
 
     # perform multiple comparisons correction, if any
-    if correction == 'fdr':
+    if correction == "fdr":
         q_vals = _false_discovery_adjust(output[:, -1])
         out = np.empty((output.shape[0], output.shape[1] + 1), dtype="object")
         out[:, :-1] = output
@@ -269,7 +296,7 @@ def multi_sample_test(data_array, treatment_col, hypotheses='all',
 
 
 def _get_comparisons(data, treatment_col):
-    '''
+    """
     Generates a list of pairwise comparisons for a k-sample test.
 
     Parameters
@@ -284,15 +311,14 @@ def _get_comparisons(data, treatment_col):
     comparisons: list of lists
         list of two-member lists containing each comparison
 
-    '''
+    """
     if isinstance(data, pd.DataFrame):
         data = data.to_numpy()
     comparisons = []
     for i, j in combinations(np.unique(data[:, treatment_col]), 2):
         comparisons.append([i, j])
-    comparisons = np.array(comparisons, dtype='object')
-    out = np.empty((comparisons.shape[0], comparisons.shape[1] + 1),
-                   dtype="object")
+    comparisons = np.array(comparisons, dtype="object")
+    out = np.empty((comparisons.shape[0], comparisons.shape[1] + 1), dtype="object")
     out[:, :-1] = comparisons
     return out
 
@@ -305,7 +331,7 @@ def binomial(x, y):
 
 
 def _false_discovery_adjust(pvals, return_index=False):
-    '''
+    """
     Performs the Benjamini-Hochberg method to control false discovery rate.
 
     Parameters
@@ -336,17 +362,17 @@ def _false_discovery_adjust(pvals, return_index=False):
     must accept to regard the result of that hypothesis test significant.
     However, q-values are often called adjusted p-values in practice, so
     we do so here.
-    '''
+    """
     # argsort so we can sort a list of hypotheses, if need be
     sort_key = np.argsort(pvals)
     # q-value adjustment
     q_vals = np.array(pvals)[sort_key] * len(pvals)
-    q_vals /= np.array(range(1, len(pvals)+1))
+    q_vals /= np.array(range(1, len(pvals) + 1))
 
     # list of q values must be strictly non-decreasing
-    for i in range(len(q_vals)-1, 0, -1):
-        if q_vals[i] < q_vals[i-1]:
-            q_vals[i-1] = q_vals[i]
+    for i in range(len(q_vals) - 1, 0, -1):
+        if q_vals[i] < q_vals[i - 1]:
+            q_vals[i - 1] = q_vals[i]
 
     if return_index is True:
         return q_vals, sort_key

@@ -3,12 +3,13 @@ from numpy.random import shuffle
 from hierarch import numba_overloads
 import numba as nb
 import pandas as pd
+
 assert numba_overloads
 
 
 @nb.jit(nopython=True, cache=True)
 def set_numba_random_state(seed):
-    '''
+    """
     Helper function to set numba's RNG seed.
 
     Parameters
@@ -16,14 +17,14 @@ def set_numba_random_state(seed):
 
     seed: int32
 
-    '''
+    """
     np.random.seed(seed)
 
 
 @nb.jit(nopython=True, cache=True)
 def nb_data_grabber(data, col, treatment_labels):
 
-    '''
+    """
 
     Numba-accelerated fancy indexing.
 
@@ -46,7 +47,7 @@ def nb_data_grabber(data, col, treatment_labels):
     ret_list: list of 1D arrays
 
 
-    '''
+    """
 
     ret_list = []
 
@@ -61,7 +62,7 @@ def nb_data_grabber(data, col, treatment_labels):
 @nb.jit(nopython=True, cache=True)
 def nb_unique(input_data, axis=0):
 
-    '''
+    """
 
     Internal function that serves the same purpose as
 
@@ -99,7 +100,7 @@ def nb_unique(input_data, axis=0):
     in the input array
 
 
-    '''
+    """
     # don't want to sort original data
 
     if axis == 1:
@@ -114,7 +115,7 @@ def nb_unique(input_data, axis=0):
     orig_idx = np.array([i for i in range(data.shape[0])])
 
     # sort our data AND the original indexes
-    for i in range(data.shape[1]-1, -1, -1):
+    for i in range(data.shape[1] - 1, -1, -1):
 
         sorter = data[:, i].argsort(kind="mergesort")
 
@@ -151,7 +152,7 @@ def nb_unique(input_data, axis=0):
 @nb.jit(nopython=True, cache=True)
 def welch_statistic(data, col, treatment_labels):
 
-    '''
+    """
 
     Calculates Welch's t statistic.
 
@@ -206,7 +207,7 @@ def welch_statistic(data, col, treatment_labels):
     by Arnold Janssen. https://doi.org/10.1016/S0167-7152(97)00043-6.
 
 
-    '''
+    """
     # get our two samples from the data matrix
 
     sample_a, sample_b = nb_data_grabber(data, col, treatment_labels)
@@ -215,15 +216,15 @@ def welch_statistic(data, col, treatment_labels):
 
     # mean difference
 
-    meandiff = (np.mean(sample_a) - np.mean(sample_b))
+    meandiff = np.mean(sample_a) - np.mean(sample_b)
 
     # weighted sample variances - might be able to speed this up
 
-    a_bessel = (sample_a.size/(sample_a.size - 1))
-    var_weight_one = (np.var(sample_a)*a_bessel) / len_a
+    a_bessel = sample_a.size / (sample_a.size - 1)
+    var_weight_one = (np.var(sample_a) * a_bessel) / len_a
 
-    b_bessel = (sample_b.size/(sample_b.size - 1))
-    var_weight_two = (np.var(sample_b)*b_bessel) / len_b
+    b_bessel = sample_b.size / (sample_b.size - 1)
+    var_weight_two = (np.var(sample_b) * b_bessel) / len_b
 
     # compute t statistic
 
@@ -235,7 +236,7 @@ def welch_statistic(data, col, treatment_labels):
 @nb.jit(nopython=True, cache=True)
 def iter_return(data, col_to_permute, iterator, counts):
 
-    '''
+    """
 
     In-place shuffles a column based on an input. Cannot be cluster-aware.
 
@@ -263,7 +264,7 @@ def iter_return(data, col_to_permute, iterator, counts):
         repeated (typically 1)
 
 
-    '''
+    """
     # the shuffled column is defined by an input variable
 
     if len(iterator) == data.shape[0]:
@@ -273,17 +274,17 @@ def iter_return(data, col_to_permute, iterator, counts):
     else:
         shuffled_col_values = np.array(iterator)
 
-    # check if the shuffled column needs to be duplicated to fit back into
-    # the original matrix
+        # check if the shuffled column needs to be duplicated to fit back into
+        # the original matrix
         shuffled_col_values = np.repeat(shuffled_col_values, counts)
 
-        data[:, col_to_permute-1] = shuffled_col_values
+        data[:, col_to_permute - 1] = shuffled_col_values
 
 
 @nb.jit(nopython=True, cache=True)
 def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
 
-    '''
+    """
 
     In-place shuffles a column, in a cluster-aware fashion if necessary.
 
@@ -320,7 +321,7 @@ def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
         repeated (typically 1)
 
 
-    '''
+    """
 
     # if there are no clusters, just shuffle the columns
 
@@ -330,32 +331,32 @@ def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
             shuffle(data[:, col_to_permute - 1])
 
         else:
-            for idx in range(len(keys)-1):
+            for idx in range(len(keys) - 1):
 
-                shuffle(data[:, col_to_permute - 1][keys[idx]:keys[idx+1]])
+                shuffle(data[:, col_to_permute - 1][keys[idx] : keys[idx + 1]])
 
     else:
         if col_to_permute == 1:
             shuffle(shuffled_col_values)
 
-    # if not, shuffle between the indices in keys
+        # if not, shuffle between the indices in keys
         else:
 
-            for idx in range(len(keys)-1):
+            for idx in range(len(keys) - 1):
 
-                shuffle(shuffled_col_values[keys[idx]:keys[idx+1]])
+                shuffle(shuffled_col_values[keys[idx] : keys[idx + 1]])
 
-    # check if the shuffled column needs to be repeated to fit back
-    # into the original matrix
+        # check if the shuffled column needs to be repeated to fit back
+        # into the original matrix
 
         shuffled_col_values = np.repeat(shuffled_col_values, counts)
 
-        data[:, col_to_permute-1] = shuffled_col_values
+        data[:, col_to_permute - 1] = shuffled_col_values
 
 
 @nb.jit(nopython=True, cache=True)
 def id_cluster_counts(design):
-    '''
+    """
     Constructs a Typed Dictionary from a tuple of arrays corresponding
     to number of values described by each cluster in a design matrix.
     Again, this indirectly assumes that the design matrix is
@@ -373,7 +374,7 @@ def id_cluster_counts(design):
         contains the number of subclusters in each cluster
         in that column.
 
-    '''
+    """
     cluster_dict = {}
     to_analyze = design
     for i in range(to_analyze.shape[1] - 1, -1, -1):
@@ -385,9 +386,10 @@ def id_cluster_counts(design):
 
 
 @nb.jit(nopython=True, cache=True)
-def nb_reweighter(data, columns_to_resample, clusternum_dict,
-                  start, shape, indexes=True):
-    '''
+def nb_reweighter(
+    data, columns_to_resample, clusternum_dict, start, shape, indexes=True
+):
+    """
 
     Internal function for reweighting a design matrix with integer
     weights.
@@ -431,7 +433,7 @@ def nb_reweighter(data, columns_to_resample, clusternum_dict,
         Nested bootstrapped resample of the input data array
 
 
-    '''
+    """
 
     out = data.astype(np.float64)
     # at the start, everything is weighted equally
@@ -459,7 +461,7 @@ def nb_reweighter(data, columns_to_resample, clusternum_dict,
             for idx, v in enumerate(to_do):
                 num = v.item()
                 # num*weights[idx] carries over weights from previous columns
-                randos = np.random.multinomial(num*weights[idx], [1/num]*num)
+                randos = np.random.multinomial(num * weights[idx], [1 / num] * num)
                 for idx_2, w in enumerate(randos):
                     new_weight[place + idx_2] = w.item()
                 place += v
@@ -475,9 +477,8 @@ def nb_reweighter(data, columns_to_resample, clusternum_dict,
 
 
 @nb.jit(nopython=True, cache=True)
-def nb_reweighter_real(data, columns_to_resample,
-                       clusternum_dict, start, shape):
-    '''
+def nb_reweighter_real(data, columns_to_resample, clusternum_dict, start, shape):
+    """
 
     Internal function for reweighting a design matrix with real
     weights.
@@ -514,7 +515,7 @@ def nb_reweighter_real(data, columns_to_resample,
 
         Nested bootstrapped resample of the input data array
 
-    '''
+    """
     out = data.astype(np.float64)
     # at the start, everything is weighted equally
     # dype is float64 because weights can be any real number
@@ -541,8 +542,7 @@ def nb_reweighter_real(data, columns_to_resample,
             for idx, v in enumerate(to_do):
                 num = [1 for a in range(v.item())]
                 # multiplying by weights[idx] carries over prior columns
-                randos = (np.random.dirichlet(num, size=None)
-                          * weights[idx] * v.item())
+                randos = np.random.dirichlet(num, size=None) * weights[idx] * v.item()
                 for idx_2, w in enumerate(randos):
                     new_weight[place + idx_2] = w.item()
                 place += v
@@ -556,7 +556,7 @@ def nb_reweighter_real(data, columns_to_resample,
 @nb.jit(nopython=True, cache=True)
 def weights_to_index(weights):
 
-    '''
+    """
     Converts a 1D array of integer weights to indices.
     Equivalent to np.array(list(range(n))).repeat(weights).
 
@@ -568,7 +568,7 @@ def weights_to_index(weights):
     ----------
     indexes: 1D array of ints
 
-    '''
+    """
     indexes = np.empty(weights.sum(), dtype=np.int64)
     spot = 0
     for i, v in enumerate(weights):
@@ -578,7 +578,7 @@ def weights_to_index(weights):
     return indexes
 
 
-def mean_agg(data, ref='None', groupby=-3):
+def mean_agg(data, ref="None", groupby=-3):
 
     """
     Performs a "groupby" aggregation by taking the mean. Can only be used for
@@ -616,11 +616,11 @@ def mean_agg(data, ref='None', groupby=-3):
 
     if isinstance(ref, str):
 
-        key = hash((data[:, :groupby+1].tobytes(), ref))
+        key = hash((data[:, : groupby + 1].tobytes(), ref))
 
     else:
 
-        key = hash((data[:, :groupby+1].tobytes(), ref.tobytes()))
+        key = hash((data[:, : groupby + 1].tobytes(), ref.tobytes()))
 
     try:
 
@@ -629,7 +629,7 @@ def mean_agg(data, ref='None', groupby=-3):
 
         if isinstance(ref, str):
 
-            unique_idx, unique_counts = nb_unique(data[:, :groupby+1])[1:]
+            unique_idx, unique_counts = nb_unique(data[:, : groupby + 1])[1:]
 
             mean_agg.__dict__[key] = unique_idx, unique_counts
 
@@ -639,10 +639,11 @@ def mean_agg(data, ref='None', groupby=-3):
 
         else:
 
-            unique_idx = make_ufunc_list(data[:, :groupby+1], ref)
+            unique_idx = make_ufunc_list(data[:, : groupby + 1], ref)
 
-            unique_counts = np.append(unique_idx[1:],
-                                      data[:, groupby+1].size) - unique_idx
+            unique_counts = (
+                np.append(unique_idx[1:], data[:, groupby + 1].size) - unique_idx
+            )
 
             mean_agg.__dict__[key] = unique_idx, unique_counts
 
@@ -661,7 +662,7 @@ def mean_agg(data, ref='None', groupby=-3):
 
 def msp(items):
 
-    '''Yield the permutations of `items` where items is either a list
+    """Yield the permutations of `items` where items is either a list
 
     of integers representing the actual items or a list of hashable items.
 
@@ -711,7 +712,7 @@ def msp(items):
 
     Taken from @smichr
 
-    '''
+    """
 
     def visit(head):
 
@@ -778,12 +779,12 @@ def msp(items):
 
 def unique_idx_w_cache(data):
 
-    '''
+    """
     Just np.unique(return_index=True, axis=0) with memoization, as np.unique
     is called a LOT in this package. Numpy arrays are not hashable,
     so this hashes the bytes of the array instead.
 
-    '''
+    """
 
     key = hash(data.tobytes())
     try:
@@ -798,15 +799,13 @@ def unique_idx_w_cache(data):
 
         for i in range(0, data.shape[1] - 1):
 
-            unique_lists += [np.unique(data[:, :i+1],
-                             return_index=True, axis=0)[1]]
+            unique_lists += [np.unique(data[:, : i + 1], return_index=True, axis=0)[1]]
 
         unique_idx_w_cache.__dict__[key] = unique_lists
 
         if len(unique_idx_w_cache.__dict__.keys()) > 50:
 
-            unique_idx_w_cache.__dict__.pop(list(
-                unique_idx_w_cache.__dict__)[0])
+            unique_idx_w_cache.__dict__.pop(list(unique_idx_w_cache.__dict__)[0])
 
         return unique_lists
 
@@ -814,7 +813,7 @@ def unique_idx_w_cache(data):
 @nb.jit(nopython=True, cache=True)
 def make_ufunc_list(target, ref):
 
-    '''
+    """
 
     Makes a list of indices to perform a ufunc.reduceat operation along. This
     is necessary when an aggregation operation is performed
@@ -842,7 +841,7 @@ def make_ufunc_list(target, ref):
         Indices to reduceat along.
 
 
-    '''
+    """
 
     reference = ref
 
@@ -867,7 +866,7 @@ def make_ufunc_list(target, ref):
 
 def preprocess_data(data):
 
-    '''
+    """
 
     Performs label encoding without overwriting numerical variables.
 
@@ -889,7 +888,7 @@ def preprocess_data(data):
         to np.float64s replaced with integer values.
 
 
-    '''
+    """
     # don't want to overwrite data
     if isinstance(data, np.ndarray):
 
@@ -921,7 +920,6 @@ def preprocess_data(data):
 
 
 class GroupbyMean:
-
     def __init__(self):
         pass
 
@@ -955,12 +953,13 @@ class GroupbyMean:
 
                 reference, counts = self.reference_dict[column]
 
-                reduce_at_list = class_make_ufunc_list(target[:, :-2],
-                                                       reference, counts)
+                reduce_at_list = class_make_ufunc_list(
+                    target[:, :-2], reference, counts
+                )
 
-                reduce_at_counts = (np.append(reduce_at_list[1:],
-                                              target[:, -2].size) -
-                                    reduce_at_list)
+                reduce_at_counts = (
+                    np.append(reduce_at_list[1:], target[:, -2].size) - reduce_at_list
+                )
 
                 self.cache_dict[key] = reduce_at_list, reduce_at_counts
 
@@ -968,8 +967,7 @@ class GroupbyMean:
 
                     self.cache_dict.pop(list(self.cache_dict)[0])
 
-            agg_col = (np.add.reduceat(target[:, -1], reduce_at_list) /
-                       reduce_at_counts)
+            agg_col = np.add.reduceat(target[:, -1], reduce_at_list) / reduce_at_counts
 
             target = target[reduce_at_list][:, :-1]
 
@@ -981,7 +979,7 @@ class GroupbyMean:
 @nb.jit(nopython=True, cache=True)
 def class_make_ufunc_list(target, reference, counts):
 
-    '''
+    """
 
     Makes a list of indices to perform a ufunc.reduceat operation along. This
     is necessary when an aggregation operation is performed
@@ -1011,7 +1009,7 @@ def class_make_ufunc_list(target, reference, counts):
         Indices to reduceat along.
 
 
-    '''
+    """
 
     ufunc_list = np.empty(0, dtype=np.int64)
 
