@@ -133,6 +133,7 @@ class Permuter:
 
         try:
             self.keys = unique_idx_w_cache(self.values)[-2]
+            self.keys = np.append(self.keys, data.shape[0])
         except IndexError:
             self.keys = unique_idx_w_cache(self.values)[-1]
 
@@ -145,11 +146,12 @@ class Permuter:
                                         [self.indexes])
 
     def transform(self, data):
-        if self.exact is True:
-            next_iter = next(self.iterator)
-            return iter_return(data, self.col_to_permute,
-                               tuple(next_iter), self.counts)
+        if self.exact is False:
+            randomized_return(data, self.col_to_permute,
+                              self.shuffled_col_values, self.keys,
+                              self.counts)
         else:
-            return randomized_return(data, self.col_to_permute,
-                                     self.shuffled_col_values, self.keys,
-                                     self.counts)
+            next_iter = next(self.iterator)
+            iter_return(data, self.col_to_permute,
+                        tuple(next_iter), self.counts)
+        return data

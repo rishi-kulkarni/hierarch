@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.random import shuffle
 from hierarch import numba_overloads
 import numba as nb
 import pandas as pd
@@ -236,7 +237,7 @@ def iter_return(data, col_to_permute, iterator, counts):
 
     '''
 
-    Shuffles a column based on an input. Cannot be cluster-aware.
+    In-place shuffles a column based on an input. Cannot be cluster-aware.
 
     Parameters
     ----------
@@ -262,30 +263,21 @@ def iter_return(data, col_to_permute, iterator, counts):
         repeated (typically 1)
 
 
-    Returns
-    ----------
-
-
-    permute: 2D array
-
-        Array the same shape as data, but with column n-1 resampled
-        with replacement.
-
-
     '''
     # the shuffled column is defined by an input variable
-    shuffled_col_values = np.array(iterator)
+
+    if len(iterator) == data.shape[0]:
+
+        data[:, col_to_permute - 1] = iterator
+
+    else:
+        shuffled_col_values = np.array(iterator)
 
     # check if the shuffled column needs to be duplicated to fit back into
     # the original matrix
-    if len(shuffled_col_values) < data.shape[0]:
-
         shuffled_col_values = np.repeat(shuffled_col_values, counts)
 
-    permute = data.copy()
-
-    permute[:, col_to_permute-1] = shuffled_col_values
-    return permute
+        data[:, col_to_permute-1] = shuffled_col_values
 
 
 @nb.jit(nopython=True, cache=True)
@@ -293,8 +285,7 @@ def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
 
     '''
 
-    Randomly shuffles a column in a cluster-aware fashion if necessary.
-
+    In-place shuffles a column, in a cluster-aware fashion if necessary.
 
     Parameters
     ----------
@@ -329,47 +320,37 @@ def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
         repeated (typically 1)
 
 
-    Returns
-    ----------
-
-
-    permute: 2D array
-
-        Array the same shape as data, but with column n-1 resampled
-        with replacement.
-
-
     '''
 
     # if there are no clusters, just shuffle the columns
 
-    if col_to_permute == 1:
+    if shuffled_col_values.size == data.shape[0]:
 
-        np.random.shuffle(shuffled_col_values)
+        if col_to_permute == 1:
+            shuffle(data[:, col_to_permute - 1])
+
+        else:
+            for idx in range(len(keys)-1):
+
+                shuffle(data[:, col_to_permute - 1][keys[idx]:keys[idx+1]])
+
+    else:
+        if col_to_permute == 1:
+            shuffle(shuffled_col_values)
 
     # if not, shuffle between the indices in keys
-    else:
+        else:
 
-        for idx, _ in enumerate(keys):
+            for idx in range(len(keys)-1):
 
-            if idx < len(keys)-1:
-
-                np.random.shuffle(shuffled_col_values[keys[idx]:keys[idx+1]])
-
-            else:
-
-                np.random.shuffle(shuffled_col_values[keys[idx]:])
+                shuffle(shuffled_col_values[keys[idx]:keys[idx+1]])
 
     # check if the shuffled column needs to be repeated to fit back
     # into the original matrix
-    if len(shuffled_col_values) < data.shape[0]:
 
         shuffled_col_values = np.repeat(shuffled_col_values, counts)
 
-    permute = data.copy()
-    permute[:, col_to_permute-1] = shuffled_col_values
-
-    return permute
+        data[:, col_to_permute-1] = shuffled_col_values
 
 
 @nb.jit(nopython=True, cache=True)
