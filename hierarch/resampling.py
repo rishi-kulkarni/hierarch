@@ -214,7 +214,7 @@ class Permuter:
         else:
             self.shuffled_col_values = data[:, self.col_to_permute][self.indexes]
 
-    def transform(self, data):
+    def transform(self, data, col_to_permute):
         """Permute target column in-place.
 
         Parameters
@@ -229,17 +229,13 @@ class Permuter:
         """
         if self.exact is False:
             randomized_return(
-                data,
-                self.col_to_permute,
-                self.shuffled_col_values,
-                self.keys,
-                self.counts,
+                data, col_to_permute, self.shuffled_col_values, self.keys, self.counts,
             )
         else:
             if self._len == len(data):
-                data[:, self.col_to_permute] = next(self.iterator)
+                data[:, col_to_permute] = next(self.iterator)
             else:
                 iter_return(
-                    data, self.col_to_permute, tuple(next(self.iterator)), self.counts
+                    data, col_to_permute, tuple(next(self.iterator)), self.counts
                 )
         return data

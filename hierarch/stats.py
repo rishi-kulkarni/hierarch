@@ -150,13 +150,16 @@ def two_sample_test(
         # just fit the permuter if this is a randomized test
         permuter.fit(test, treatment_col)
 
+    # skip the dot on the permute function
+    call_permute = permuter.transform
+
     # initialize empty null distribution list
     null_distribution = []
 
     # first set of permutations is on the original data
     # this helps to prevent getting a p-value of 0
     for k in range(permutations):
-        permute_resample = permuter.transform(test)
+        permute_resample = call_permute(test, treatment_col)
         null_distribution.append(
             teststat(permute_resample, treatment_col, treatment_labels)
         )
@@ -174,8 +177,9 @@ def two_sample_test(
 
         # generate permuted samples, calculate test statistic,
         # append to null distribution
+
         for k in range(permutations):
-            permute_resample = permuter.transform(bootstrapped_sample)
+            permute_resample = call_permute(bootstrapped_sample, treatment_col)
             null_distribution.append(
                 teststat(permute_resample, treatment_col, treatment_labels)
             )
