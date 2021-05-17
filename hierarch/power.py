@@ -8,17 +8,17 @@ class DataSimulator:
         self.random_generator = np.random.default_rng(random_state)
 
     def fit(self, hierarchy=[]):
-        self.container = make_ref_container(hierarchy.copy())
+        self.container = _make_ref_container(hierarchy.copy())
 
     def generate(self):
         output = self.container.copy()
-        output[:, -1] = gen_fake_data(
+        output[:, -1] = _gen_fake_data(
             self.container, self.parameters, seed=self.random_generator
         )
         return output
 
 
-def gen_fake_data(reference, params, return_all=False, seed=None):
+def _gen_fake_data(reference, params, return_all=False, seed=None):
 
     rng = np.random.default_rng(seed)
 
@@ -60,7 +60,7 @@ def gen_fake_data(reference, params, return_all=False, seed=None):
         return fakedata[:, -2]
 
 
-def make_ref_container(samples_per_level=[]):
+def _make_ref_container(samples_per_level=[]):
 
     iterator = samples_per_level
 

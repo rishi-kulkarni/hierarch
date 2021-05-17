@@ -645,9 +645,11 @@ class GroupbyMean:
 
         return target
 
-    def fit_transform(self, target, reference_data, iterations=1):
+    def fit_transform(self, target, reference_data=None, iterations=1):
         """Combines fit() and transform() for convenience. See those methods for details.
         """
+        if reference_data is None:
+            reference_data = target
         self.fit(reference_data)
         return self.transform(target, iterations=iterations)
 
