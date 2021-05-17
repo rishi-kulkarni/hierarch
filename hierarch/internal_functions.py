@@ -432,88 +432,6 @@ def weights_to_index(weights):
     return indexes
 
 
-def mean_agg(data, ref="None", groupby=-3):
-
-    """
-    Performs a "groupby" aggregation by taking the mean. Can only be used for
-    quantities that can be calculated element-wise (such as mean.)
-    Potentially workable with Numba guvectorized ufuncs, too.
-
-
-    Parameters
-    ----------
-
-    data: array
-
-        Data to perform operation on. Row to aggregate to must be sorted.
-
-
-    groupby = int
-
-        Column to groupby. The default of -3 assumes the last column is values
-        and the second-to-last column is some kind of categorical
-        label (technical replicate 1, 2, etc.)
-
-
-    Returns
-    ----------
-
-
-    data_agg: array
-
-        A reduced array such that the labels in column groupby
-        (now column index -2) are no longer duplicated and column index -1
-        contains averaged data values.
-
-
-    """
-
-    if isinstance(ref, str):
-
-        key = hash((data[:, : groupby + 1].tobytes(), ref))
-
-    else:
-
-        key = hash((data[:, : groupby + 1].tobytes(), ref.tobytes()))
-
-    try:
-
-        unique_idx, unique_counts = mean_agg.__dict__[key]
-    except KeyError:
-
-        if isinstance(ref, str):
-
-            unique_idx, unique_counts = nb_unique(data[:, : groupby + 1])[1:]
-
-            mean_agg.__dict__[key] = unique_idx, unique_counts
-
-            if len(mean_agg.__dict__.keys()) > 50:
-
-                mean_agg.__dict__.pop(list(mean_agg.__dict__)[0])
-
-        else:
-
-            unique_idx = make_ufunc_list(data[:, : groupby + 1], ref)
-
-            unique_counts = (
-                np.append(unique_idx[1:], data[:, groupby + 1].size) - unique_idx
-            )
-
-            mean_agg.__dict__[key] = unique_idx, unique_counts
-
-            if len(mean_agg.__dict__.keys()) > 50:
-
-                mean_agg.__dict__.pop(list(mean_agg.__dict__)[0])
-
-    avgcol = np.add.reduceat(data[:, -1], unique_idx) / unique_counts
-
-    data_agg = data[unique_idx][:, :-1]
-
-    data_agg[:, -1] = avgcol
-
-    return data_agg
-
-
 def msp(items):
     """Yield the permutations of `items`
 
@@ -602,72 +520,19 @@ def msp(items):
         yield visit(head)
 
 
-@nb.jit(nopython=True, cache=True)
-def make_ufunc_list(target, ref):
-    """Makes a list of indices to perform a ufunc.reduceat operation along.
-
-    This is only necessary when an aggregation operation is performed
-    while grouping by a column that was resampled using the "indices"
-    bootstrapping algorithm.
+def preprocess_data(data):
+    """Performs label encoding without overwriting numerical variables.
 
     Parameters
     ----------
-    target : 2D numeric array
-        Array that will be the target of a reduceat operation.
-    ref : 2D numeric array
-        The array to use as a reference for building the list of indices.
+    data : 2D array or pandas DataFrame
+        Data to be encoded.
 
     Returns
     -------
-    1D array of ints
-        Indices to reduceat along.
-    """
-
-    reference = ref
-
-    for i in range(reference.shape[1] - target.shape[1]):
-
-        reference, counts = nb_unique(reference[:, :-1])[0::2]
-
-    counts = counts.astype(np.int64)
-
-    ufunc_list = np.empty(0, dtype=np.int64)
-
-    i = 0
-
-    while i < target.shape[0]:
-
-        ufunc_list = np.append(ufunc_list, i)
-
-        i += counts[np.all((reference == target[i]), axis=1)][0]
-
-    return ufunc_list
-
-
-def preprocess_data(data):
-
-    """
-
-    Performs label encoding without overwriting numerical variables.
-
-
-    Parameters
-    ----------
-
-    data: 2D array or pandas DataFrame
-
-        Data to be encoded.
-
-
-    Returns
-    ----------
-
-    encoded: 2D array of float64s
-
-        The array underlying data, but all elements that cannot be cast
+    2D array of float64s
+        An array identical to data, but all elements that cannot be cast
         to np.float64s replaced with integer values.
-
-
     """
     # don't want to overwrite data
     if isinstance(data, np.ndarray):
@@ -700,14 +565,25 @@ def preprocess_data(data):
 
 
 class GroupbyMean:
+    """Class for performing groupby reductions on numpy arrays.
+
+    Currently only supports mean reduction.
+    """
+
     def __init__(self):
-        pass
-
-    def fit(self, reference_data):
-
-        self.reference_dict = {}
 
         self.cache_dict = {}
+
+    def fit(self, reference_data):
+        """Fits the class to reference data.
+
+        Parameters
+        ----------
+        reference_data : 2D numeric numpy array
+            Reference data to use for the reduction.
+
+        """
+        self.reference_dict = {}
 
         reference = reference_data[:, :-1]
 
@@ -718,7 +594,21 @@ class GroupbyMean:
             self.reference_dict[i] = (reference, counts.astype(np.int64))
 
     def transform(self, target, iterations=1):
+        """Performs iterative groupby reductions. 
 
+        Parameters
+        ----------
+        target : 2D numeric array
+            Array to be reduced.
+        iterations : int, optional
+            Number of reductions to perform, by default 1
+
+        Returns
+        -------
+        2D numeric array
+            Array with the same number of rows as target data, but one fewer column
+            for each iteration. Final column values are combined by taking the mean.
+        """
         for i in range(iterations):
 
             key = hash((target[:, :-2]).tobytes())
@@ -755,40 +645,33 @@ class GroupbyMean:
 
         return target
 
+    def fit_transform(self, target, reference_data, iterations=1):
+        """Combines fit() and transform() for convenience. See those methods for details.
+        """
+        self.fit(reference_data)
+        return self.transform(target, iterations=iterations)
+
 
 @nb.jit(nopython=True, cache=True)
 def class_make_ufunc_list(target, reference, counts):
+    """Makes a list of indices to perform a ufunc.reduceat operation along.
 
-    """
-
-    Makes a list of indices to perform a ufunc.reduceat operation along. This
-    is necessary when an aggregation operation is performed
+    This is necessary when an aggregation operation is performed
     while grouping by a column that was resampled.
-
 
     Parameters
     ----------
-
-
-    target: 2D array, float64
-
+    target : 2D numeric array
         Array that the groupby-aggregate operation will be performed on.
+    reference : 2D numeric array
+        Unique rows in target for the column that will be aggregated to.
+    counts : 1D array of ints
+        Number of times each row in reference should appear in target.
 
-
-    ref: 2D array, float64
-
-        Array that the target array was resampled from.
-
-
-    Output
-    ----------
-
-
-    ufunc_list: 1D array of ints
-
+    Returns
+    -------
+    1D array of ints
         Indices to reduceat along.
-
-
     """
 
     ufunc_list = np.empty(0, dtype=np.int64)
@@ -812,3 +695,4 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
+
