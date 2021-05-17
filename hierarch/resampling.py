@@ -3,7 +3,7 @@ from itertools import cycle
 from hierarch.internal_functions import (
     nb_reweighter,
     nb_reweighter_real,
-    unique_idx_w_cache,
+    nb_unique,
     id_cluster_counts,
     msp,
     set_numba_random_state,
@@ -66,7 +66,7 @@ class Bootstrapper:
         else:
             raise KeyError("Invalid 'kind' argument.")
 
-    def fit(self, data, skip=[], y=-1):
+    def fit(self, data, skip=None, y=-1):
         """Fit the bootstrapper to the target data.
 
         Parameters
@@ -100,13 +100,17 @@ class Bootstrapper:
             )
             raise
 
-        for v in iter(skip):
-            if not isinstance(v, int):
-                raise IndexError(
-                    "skip values must be integers corresponding to column indices."
-                )
-            if v >= data.shape[1] - 1:
-                raise IndexError("skip index out of bounds for this array.")
+        if skip is not None:
+            skip = list(skip)
+            for v in iter(skip):
+                if not isinstance(v, int):
+                    raise IndexError(
+                        "skip values must be integers corresponding to column indices."
+                    )
+                if v >= data.shape[1] - 1:
+                    raise IndexError("skip index out of bounds for this array.")
+        else:
+            skip = []
 
         self.cluster_dict = id_cluster_counts(data[:, :y])
         y %= data.shape[1]
@@ -201,7 +205,8 @@ class Permuter:
         self.exact = exact
 
         try:
-            self.keys = unique_idx_w_cache(self.values)[-2]
+            self.values[:, -3]
+            self.keys = nb_unique(self.values[:, :-2])[1]
             self.keys = np.append(self.keys, data.shape[0])
         except IndexError:
             self.keys = np.empty(0)

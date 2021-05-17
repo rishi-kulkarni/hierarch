@@ -15,7 +15,7 @@ def two_sample_test(
     data_array,
     treatment_col: int,
     compare="means",
-    skip=[],
+    skip=None,
     bootstraps=100,
     permutations=1000,
     kind="weights",
@@ -38,7 +38,7 @@ def two_sample_test(
         calls the Welch t-statistic for a difference of means test, by default "means"
     skip : list of ints, optional
         Columns to skip in the bootstrap. Skip columns that were sampled
-        without replacement from the prior column, by default []
+        without replacement from the prior column, by default None
     bootstraps : int, optional
         Number of bootstraps to perform, by default 100. Can be set to 1 for a
         permutation test without any bootstrapping.
@@ -84,10 +84,14 @@ def two_sample_test(
     rng = np.random.default_rng(seed)
 
     # enforce lower bound on skip
-    for v in reversed(skip):
-        if v <= treatment_col + 1:
-            warn("No need to include columns before treated columns in skip.")
-            skip.remove(v)
+    if skip is not None:
+        skip = list(skip)
+        for v in reversed(skip):
+            if v <= treatment_col + 1:
+                warn("No need to include columns before treated columns in skip.")
+                skip.remove(v)
+    else:
+        skip = []
 
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
@@ -203,7 +207,7 @@ def multi_sample_test(
     hypotheses="all",
     correction="fdr",
     compare="means",
-    skip=[],
+    skip=None,
     bootstraps=100,
     permutations=1000,
     kind="weights",
@@ -234,7 +238,7 @@ def multi_sample_test(
     compare : function or str, optional
         The comparison to use to perform the hypothesis test, by default "means"
     skip : list of ints, optional
-        Columns to skip in the bootstrap, by default []
+        Columns to skip in the bootstrap, by default None
     bootstraps : int, optional
         Number of bootstraps to perform, by default 100
     permutations : int or "all"
@@ -329,23 +333,22 @@ def multi_sample_test(
     return output
 
 
-def _get_comparisons(data, treatment_col):
-    """
-    Generates a list of pairwise comparisons for a k-sample test.
+def _get_comparisons(data, treatment_col: int):
+    """Generates a list of pairwise comparisons for a k-sample test.
 
     Parameters
     ----------
-    data: 2D array or pd.DataFrame
-
-    treatment_col: int
-        The column of interest
+    data : 2D array or pandas DataFrame
+        Target data.
+    treatment_col : int
+        Target column.
 
     Returns
-    ----------
-    comparisons: list of lists
-        list of two-member lists containing each comparison
-
+    -------
+    list of lists
+        list of two-member lists containing each pairwise comparison.
     """
+
     if isinstance(data, pd.DataFrame):
         data = data.to_numpy()
     comparisons = []
@@ -357,7 +360,22 @@ def _get_comparisons(data, treatment_col):
     return out
 
 
-def _binomial(x, y):
+def _binomial(x: int, y: int):
+    """Calculates a binomial coefficient.
+
+    Parameters
+    ----------
+    x : int
+        Total number of elements
+    y : int
+        Elements to choose
+
+    Returns
+    -------
+    int
+        x choose y
+    """
+
     try:
         return math.factorial(x) // math.factorial(y) // math.factorial(x - y)
     except ValueError:
@@ -365,38 +383,39 @@ def _binomial(x, y):
 
 
 def _false_discovery_adjust(pvals, return_index=False):
-    """
-    Performs the Benjamini-Hochberg method to control false discovery rate.
+    """Performs the Benjamini-Hochberg procedure for controlling false discovery rate.
 
     Parameters
     ----------
-    pvals: 1D array-like
+    pvals : 1D array-like
         p-values to be adjusted
-
-    return_index: bool, default=False
-        If true, will return the indices to sort the original p-value list.
+    return_index : bool, optional
+        If true, will return the indices to sort the original p-value list, by default False
 
     Returns
-    ----------
-    q_vals: 1D array
-        q-values, or "adjusted" p-values.
+    -------
+    q_vals : 1D array
+        q-values aka "adjusted" p-values
 
-    sort_key: 1D array
-        indices to sort pvals
+    sort_key : 1D array
+        indices used to sort pvals
 
     Notes
-    ----------
+    -----
     Refererence: Benjamini, Y. & Hochberg, Y. Controlling the false discovery
     rate: a practical and powerful approach to multiple testing.
     Journal of the Royal Statistical Society.
     Series B (Methodological) 289–300 (1995).
 
-    The q-values, or "adjusted p-values," are not really p-values and should
-    not be interpreted as such. Rather, each q-value is the minimum FDR you
-    must accept to regard the result of that hypothesis test significant.
-    However, q-values are often called adjusted p-values in practice, so
-    we do so here.
+    The q-values, or "adjusted p-values," are not really p-values. 
+    Rather, each q-value is the minimum FDR you must accept to regard 
+    the result of that hypothesis test significant. In that sense, each q-value
+    represents the minimum posterior probability that the null hypothesis is
+    true for the comparison of interest. However, q-values are often called 
+    adjusted p-values in practice, so we do so here.
+
     """
+
     # argsort so we can sort a list of hypotheses, if need be
     sort_key = np.argsort(pvals)
     # q-value adjustment

@@ -515,57 +515,28 @@ def mean_agg(data, ref="None", groupby=-3):
 
 
 def msp(items):
+    """Yield the permutations of `items`
 
-    """Yield the permutations of `items` where items is either a list
+    items is either a list of integers representing the actual items or a list of hashable items.
+    The output are the unique permutations of the items.
 
-    of integers representing the actual items or a list of hashable items.
+    Parameters
+    ----------
+    items : sequence
 
-    The output are the unique permutations of the items given as a list
+    Yields
+    -------
+    list
+        permutation of items
 
-    of integers 0, ..., n-1 that represent the n unique elements in
-
-    `items`.
-
-
-    Examples
-
-    ========
-
-
-    >>> for i in msp('xoxox'):
-
-    ...   print(i)
-
-
-    [1, 1, 1, 0, 0]
-
-    [0, 1, 1, 1, 0]
-
-    [1, 0, 1, 1, 0]
-
-    [1, 1, 0, 1, 0]
-
-    [0, 1, 1, 0, 1]
-
-    [1, 0, 1, 0, 1]
-
-    [0, 1, 0, 1, 1]
-
-    [0, 0, 1, 1, 1]
-
-    [1, 0, 0, 1, 1]
-
-    [1, 1, 0, 0, 1]
-
-
+    
+    Notes
+    -----
     Reference: "An O(1) Time Algorithm for Generating Multiset Permutations",
-    Tadao Takaoka
-
+    Tadao Takaoka.
     https://pdfs.semanticscholar.org/83b2/6f222e8648a7a0599309a40af21837a0264b.pdf
 
-
     Taken from @smichr
-
     """
 
     def visit(head):
@@ -631,70 +602,25 @@ def msp(items):
         yield visit(head)
 
 
-def unique_idx_w_cache(data):
-
-    """
-    Just np.unique(return_index=True, axis=0) with memoization, as np.unique
-    is called a LOT in this package. Numpy arrays are not hashable,
-    so this hashes the bytes of the array instead.
-
-    """
-
-    key = hash(data.tobytes())
-    try:
-
-        unique_lists = unique_idx_w_cache.__dict__[key]
-
-        return unique_lists
-
-    except KeyError:
-
-        unique_lists = []
-
-        for i in range(0, data.shape[1] - 1):
-
-            unique_lists += [np.unique(data[:, : i + 1], return_index=True, axis=0)[1]]
-
-        unique_idx_w_cache.__dict__[key] = unique_lists
-
-        if len(unique_idx_w_cache.__dict__.keys()) > 50:
-
-            unique_idx_w_cache.__dict__.pop(list(unique_idx_w_cache.__dict__)[0])
-
-        return unique_lists
-
-
 @nb.jit(nopython=True, cache=True)
 def make_ufunc_list(target, ref):
+    """Makes a list of indices to perform a ufunc.reduceat operation along.
 
-    """
-
-    Makes a list of indices to perform a ufunc.reduceat operation along. This
-    is necessary when an aggregation operation is performed
-    while grouping by a column that was resampled.
-
+    This is only necessary when an aggregation operation is performed
+    while grouping by a column that was resampled using the "indices"
+    bootstrapping algorithm.
 
     Parameters
     ----------
+    target : 2D numeric array
+        Array that will be the target of a reduceat operation.
+    ref : 2D numeric array
+        The array to use as a reference for building the list of indices.
 
-    target: 2D array, float64
-
-        Array that the groupby-aggregate operation will be performed on.
-
-
-    ref: 2D array, float64
-
-        Array that the target array was resampled from.
-
-
-    Output
-    ----------
-
-    ufunc_list: 1D array of ints
-
+    Returns
+    -------
+    1D array of ints
         Indices to reduceat along.
-
-
     """
 
     reference = ref
