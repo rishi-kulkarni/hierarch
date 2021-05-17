@@ -8,45 +8,35 @@ assert numba_overloads
 
 
 @nb.jit(nopython=True, cache=True)
-def set_numba_random_state(seed):
-    """
-    Helper function to set numba's RNG seed.
+def set_numba_random_state(seed: int):
+    """Helper function to set numba's RNG seed.
 
     Parameters
     ----------
-
-    seed: int32
-
+    seed : int32
+        Seed for Numba's internal MT PRNG.
     """
     np.random.seed(seed)
 
 
 @nb.jit(nopython=True, cache=True)
-def nb_data_grabber(data, col, treatment_labels):
-
-    """
-
-    Numba-accelerated fancy indexing.
-
+def nb_data_grabber(data, col: int, treatment_labels):
+    """Numba-accelerated fancy indexing. Assumes values to grab
+    are in column index: -1.
 
     Parameters
     ----------
-
-    data: 2D array
-
-
-    col: int
-
-
-    treatment_labels: 1D array or list
-
+    data : 2D array
+        Target data.
+    col : int
+        Index of target column.
+    treatment_labels : 1D array or list
+        Labels in target column to parse.
 
     Returns
-    ----------
-
-    ret_list: list of 1D arrays
-
-
+    -------
+    list of 1D arrays
+        Values from col: -1 corresponding to the treatment_labels in target column.
     """
 
     ret_list = []
@@ -61,46 +51,29 @@ def nb_data_grabber(data, col, treatment_labels):
 
 @nb.jit(nopython=True, cache=True)
 def nb_unique(input_data, axis=0):
-
-    """
-
-    Internal function that serves the same purpose as
-
-    np.unique(a, return_index=True, return_counts=True)
-
-    when called on a 2D arrays. Appears to asymptotically
-
-    approach np.unique's speed when every row is unique,
-
-    but otherwise runs faster.
-
+    """Numba-accelerated 2D np.unique(a, return_index=True, return_counts=True)
+    
+    Appears to asymptotically approach np.unique's speed 
+    when every row is unique, but otherwise runs faster.
 
     Parameters
     ----------
-
-    input_data: 2D array
-
-
-    axis: int
-
-        0 for unique rows, 1 for unique columns
-
+    input_data : 2D numeric array
+    axis : int, optional
+        axis along which to identify unique slices, by default 0
 
     Returns
-    ----------
-
-    data[idx]: unique rows (or columns) from the input array
-
-
-    idx: index numbers of the unique rows (or columns)
-
-
-    counts: number of instances of each unique row (or column)
-
-    in the input array
-
-
+    -------
+    2D array
+        unique rows (or columns) from the input array
+    
+    1D array of ints
+        indices of unique rows (or columns) in input array
+    
+    1D array of ints
+        number of instances of each unique row
     """
+
     # don't want to sort original data
 
     if axis == 1:
@@ -150,62 +123,33 @@ def nb_unique(input_data, axis=0):
 
 
 @nb.jit(nopython=True, cache=True)
-def welch_statistic(data, col, treatment_labels):
-
-    """
-
-    Calculates Welch's t statistic.
-
+def welch_statistic(data, col: int, treatment_labels):
+    """Calculates Welch's t statistic.
 
     Takes a 2D data matrix, a column to classify data by, and the labels
-
     corresponding to the data of interest. Assumes that the largest (-1)
-
     column in the data matrix is the dependent variable.
-
-
 
     Parameters
     ----------
-
-    data: 2D array
-
-        Data matrix. The first n - 1 columns are the design matrix and the
-
-        nth column is the dependent variable.
-
-
-    col: int
-
-        Columns of the design matrix used to classify the dependent variable
-
-        into two groups.
-
-
-    treatment_labels:
-
-        The values of the elements in col.
-
+    data : 2D array
+        Data matrix. Assumes last column contains dependent variable values.
+    col : int
+        Target column to be used to divide the dependent variable into two groups.
+    treatment_labels : 1D array-like
+        Labels in target column to be used.
 
     Returns
-    ----------
-
-    t: float64
-
+    -------
+    float64
         Welch's t statistic.
-
 
     Notes
     ----------
-
     Details on the validity of this test statistic can be found in
-
     "Studentized permutation tests for non-i.i.d. hypotheses and the
-
-    generalized Behrens-Fisher problem"
-
-    by Arnold Janssen. https://doi.org/10.1016/S0167-7152(97)00043-6.
-
+    generalized Behrens-Fisher problem" by Arnold Janssen. 
+    https://doi.org/10.1016/S0167-7152(97)00043-6.
 
     """
     # get our two samples from the data matrix
@@ -234,109 +178,60 @@ def welch_statistic(data, col, treatment_labels):
 
 
 @nb.jit(nopython=True, cache=True)
-def iter_return(data, col_to_permute, iterator, counts):
-
-    """
-
-    In-place shuffles a column based on an input. Cannot be cluster-aware.
+def iter_return(data, col_to_permute: int, iterator, counts):
+    """In-place shuffles a column based on an input. Cannot be cluster-aware.
 
     Parameters
     ----------
-
-    data: 2D array of floats
-
-        Original data matrix
-
-    col_to_permute: int
-
-        Column n, which is immediately right of the column that will be
-        shuffled.
-
-
-    iterator: 1D array
-
-        Shuffled values to put into data.
-
-
-    counts: 1D array of ints
-
-        Number of times each value in iterator needs to be
-        repeated (typically 1)
-
-
+    data : 2D numeric array
+        Target data matrix.
+    col_to_permute : int
+        Index of the column whose values will be permuted.
+    iterator : 1D array-like
+        Values to replace target column with.
+    counts : 1D array-like
+        Number of times each value in iterator should appear in output.
     """
+
     # the shuffled column is defined by an input variable
 
-    if len(iterator) == data.shape[0]:
+    shuffled_col_values = np.repeat(np.array(iterator), counts)
 
-        data[:, col_to_permute - 1] = iterator
-
-    else:
-        shuffled_col_values = np.array(iterator)
-
-        # check if the shuffled column needs to be duplicated to fit back into
-        # the original matrix
-        shuffled_col_values = np.repeat(shuffled_col_values, counts)
-
-        data[:, col_to_permute - 1] = shuffled_col_values
+    data[:, col_to_permute] = shuffled_col_values
 
 
 @nb.jit(nopython=True, cache=True)
-def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
-
-    """
-
-    In-place shuffles a column, in a cluster-aware fashion if necessary.
+def randomized_return(data, col_to_permute: int, shuffled_col_values, keys, counts):
+    """Randomly shuffles a column in-place, in a cluster-aware fashion if necessary.
 
     Parameters
     ----------
-
-
-    data: 2D array of floats
-
-        Original data matrix
-
-
-    col_to_permute: int
-
-        Column n, which is immediately right of the column
-        that will be shuffled.
-
-
-    shuffled_col_values: 1D array
-
-        Values in the column to be shuffled
-
-
-    keys: 1D array of ints
-
-        Indexes of the clusters in the shuffled column. If there is no
-        clustering in the column to be shuffled, this still needs to
-        be a 1D array to get Numba to behave properly.
-
-
-    counts: 1D array of ints
-
-        Number of times each value in shuffled_col_values needs to be
-        repeated (typically 1)
-
-
+    data : 2D numeric array
+        Target data matrix.
+    col_to_permute : int
+        Index of the column whose values will be permuted.
+    shuffled_col_values : 1D array-like
+        Labels in the column to be permuted.
+    keys : 1D array-like
+        Clusters to shuffle within (if col_to_permute > 0).
+    counts : 1D array-like
+        Number of times each value in shuffled_col_values should appear in output.
     """
 
     # if there are no clusters, just shuffle the columns
 
     if shuffled_col_values.size == data.shape[0]:
 
-        if col_to_permute == 1:
-            shuffle(data[:, col_to_permute - 1])
+        if col_to_permute == 0:
+            shuffle(data[:, col_to_permute])
 
         else:
             for idx in range(len(keys) - 1):
 
-                shuffle(data[:, col_to_permute - 1][keys[idx] : keys[idx + 1]])
+                shuffle(data[:, col_to_permute][keys[idx] : keys[idx + 1]])
 
     else:
-        if col_to_permute == 1:
+        if col_to_permute == 0:
             shuffle(shuffled_col_values)
 
         # if not, shuffle between the indices in keys
@@ -351,29 +246,26 @@ def randomized_return(data, col_to_permute, shuffled_col_values, keys, counts):
 
         shuffled_col_values = np.repeat(shuffled_col_values, counts)
 
-        data[:, col_to_permute - 1] = shuffled_col_values
+        data[:, col_to_permute] = shuffled_col_values
 
 
 @nb.jit(nopython=True, cache=True)
 def id_cluster_counts(design):
-    """
+    """Identifies the hierarchy in a design matrix.
+
     Constructs a Typed Dictionary from a tuple of arrays corresponding
     to number of values described by each cluster in a design matrix.
-    Again, this indirectly assumes that the design matrix is
-    lexsorted starting from the last column.
+    This assumes that the design matrix is lexicographically sorted.
 
     Parameters
     ----------
-    design: 2D array
-        An array corresponding to a design matrix.
+    design : 2D numeric ndarray
 
-    Outputs
-    ----------
-    cluster_dict: TypedDict of int64 : array (int64)
-        Each int corresponds to a column and each array
-        contains the number of subclusters in each cluster
-        in that column.
-
+    Returns
+    -------
+    TypedDict
+        Each key corresponds to a column index and each value is the number
+        of subclusters in each cluster in that column.
     """
     cluster_dict = {}
     to_analyze = design
@@ -387,52 +279,31 @@ def id_cluster_counts(design):
 
 @nb.jit(nopython=True, cache=True)
 def nb_reweighter(
-    data, columns_to_resample, clusternum_dict, start, shape, indexes=True
+    data, columns_to_resample, clusternum_dict, start: int, shape: int, indexes=True
 ):
-    """
-
-    Internal function for reweighting a design matrix with integer
+    """Internal function for bootstrapping a design matrix with integer
     weights.
-
 
     Parameters
     ----------
-
-    data: 2D array
-
-        The original data.
-
-    columns_to_resample: 1D bool array
-
-        False for columns that do not need resampling.
-
-    clusternum_dict: numba TypedDict
-
-        This function uses the cluster_dict to quickly grab the indices in the
-        column i+1 that correspond to a unique row in column i.
-
-    start: int
-
+    data : 2D array
+        Target data to be bootstrapped.
+    columns_to_resample : 1D bool array-like
+        False for columns to be skipped in the resampling plan.
+    clusternum_dict : TypedDict
+        Hierarchy dictionary produced by id_cluster_counts
+    start : int
         First column of the data matrix to resample
-
-    shape: int
-
+    shape : int
         Last column of the data matrix to resample
-
-    indexes: bool, default=True
-
+    indexes : bool, optional
         If True, returns a reindexed array. If False, returns
-        a reweighted array.
+        a reweighted array, by default True.
 
-
-    Output
-    ----------
-
-    out: 2D array
-
-        Nested bootstrapped resample of the input data array
-
-
+    Returns
+    -------
+    2D array
+        Nonparametrically bootstrapped sample from the input data array.
     """
 
     out = data.astype(np.float64)
@@ -478,44 +349,28 @@ def nb_reweighter(
 
 @nb.jit(nopython=True, cache=True)
 def nb_reweighter_real(data, columns_to_resample, clusternum_dict, start, shape):
-    """
-
-    Internal function for reweighting a design matrix with real
+    """Internal function for bootstrapping a design matrix with real number
     weights.
-
 
     Parameters
     ----------
-
-    data: 2D array
-
-        The original data.
-
-    columns_to_resample: 1D bool array
-
-        False for columns that do not need resampling.
-
-    clusternum_dict: numba TypedDict
-
-        This function uses the cluster_dict to quickly grab the indices in the
-        column i+1 that correspond to a unique row in column i.
-
-    start: int
-
+    data : 2D array
+        Target data to be bootstrapped.
+    columns_to_resample : 1D bool array-like
+        False for columns to be skipped in the resampling plan.
+    clusternum_dict : TypedDict
+        Hierarchy dictionary produced by id_cluster_counts
+    start : int
         First column of the data matrix to resample
-
-    shape: int
-
+    shape : int
         Last column of the data matrix to resample
 
-    Output
-    ----------
-
-    resampled: 2D array
-
-        Nested bootstrapped resample of the input data array
-
+    Returns
+    -------
+    2D array
+        Nonparametrically bootstrapped sample from the input data array.
     """
+
     out = data.astype(np.float64)
     # at the start, everything is weighted equally
     # dype is float64 because weights can be any real number
@@ -555,20 +410,19 @@ def nb_reweighter_real(data, columns_to_resample, clusternum_dict, start, shape)
 
 @nb.jit(nopython=True, cache=True)
 def weights_to_index(weights):
+    """Converts a 1D array of integer weights to indices.
 
-    """
-    Converts a 1D array of integer weights to indices.
     Equivalent to np.array(list(range(n))).repeat(weights).
 
     Parameters
     ----------
-    weights: 1D array of ints
+    weights : array-like of ints
 
     Returns
-    ----------
-    indexes: 1D array of ints
-
+    -------
+    indexes: array-like of ints
     """
+
     indexes = np.empty(weights.sum(), dtype=np.int64)
     spot = 0
     for i, v in enumerate(weights):

@@ -1,71 +1,113 @@
 import numpy as np
 from itertools import cycle
-from hierarch.internal_functions import nb_reweighter, nb_reweighter_real
-from hierarch.internal_functions import unique_idx_w_cache, id_cluster_counts
-from hierarch.internal_functions import msp, set_numba_random_state
-from hierarch.internal_functions import iter_return, randomized_return
+from hierarch.internal_functions import (
+    nb_reweighter,
+    nb_reweighter_real,
+    unique_idx_w_cache,
+    id_cluster_counts,
+    msp,
+    set_numba_random_state,
+    iter_return,
+    randomized_return,
+)
+
+
+BOOTSTRAP_ALGORITHMS = ["weights", "indexes", "bayesian"]
 
 
 class Bootstrapper:
-    """
-    Nested bootstrapping class.
+    """Bootstrapper(random_state=None, kind="weights")
 
-    Methods
-    -------
+    This transformer performs a nested bootstrap on the target data.
+    Undefined behavior if the target data is not lexicographically
+    sorted. 
 
-    __init__(random_state, kind="weights"):
-        random_state: int or numpy.random Generator
-            Seeds the Bootstrapper for reproducibility.
+    Parameters
+    ----------
+    random_state : int or numpy.random.Generator instance, optional
+        Seeds the Bootstrapper for reproducibility, by default None
+    kind : { "weights", "bayesian", "indexes" }
+        Specifies the bootstrapping algorithm.
 
-        kind: str = "weights" or "bayesian" or "indexes"
-            Specifies the bootstrapping algorithm.
+        "weights" generates a set of new integer weights for
+        each datapoint.
 
-            "weights" generates a set of new integer weights for
-            each datapoint.
+        "bayesian" generates a set of new real weights for
+        each datapoint.
 
-            "bayesian" generates a set of new real weights for
-            each datapoint.
+        "indexes" generates a set of new indexes for the dataset.
+        Mathematically, this is equivalent to demanding integer weights.
+    
 
-            "indexes" generates a set of new indexes for the dataset.
-            Mathematically, this is equivalent to demanding integer weights.
+    Notes
+    -----
+    These approaches have different outputs - "weights" and "bayesian"
+    output arrays the same size of the original array, but with
+    every y-value multiplied by generated weight. "indexes" will
+    output an array that is not necessarily the same size as the
+    original array, but the weight of each y-value is 1, so certain
+    metrics are easier to compute. Assuming both algorithms generated
+    the "same" sample in terms of reweights, the arrays will be
+    equivalent after the groupby and aggregate step.
 
-            These approaches have different outputs - "weights" and "bayesian"
-            output arrays the same size of the original array, but with
-            every y-value multiplied by generated weight. "indexes" will
-            output an array that is not necessarily the same size as the
-            original array, but the weight of each y-value is 1, so certain
-            metrics are easier to compute. Assuming both algorithms generated
-            the "same" sample in terms of reweights, the arrays will be
-            equivalent after the groupby and aggregate step.
-
-            There is no reindexing equivalent of "bayesian"
-
-
-    fit(data, skip=[], y=-1)
-        Fit the bootstrapper to data.
-
-        skip: List of ints. Columns to skip in the bootstrap. Skip columns
-        that were sampled without replacement from the prior column.
-
-        y indicates the column containing the dependent variable. This
-        variable is exposed just to make the user aware of it - many functions
-        break if the dependent variable column is in the middle of the array.
-
-    transform(data, start=0)
-        Generate a bootstrapped sample from data. start indicates the last
-        column in the array that should not be resampled.
+    "bayesian" has no reindexing equivalent.
 
     """
 
     def __init__(self, random_state=None, kind="weights"):
+
         self.random_generator = np.random.default_rng(random_state)
         # this is a bit hacky, but we use the numpy generator to seed Numba
         # this makes it both reproducible and thread-safe enough
         nb_seed = self.random_generator.integers(low=2 ** 32 - 1)
         set_numba_random_state(nb_seed)
-        self.kind = kind
+        if kind in BOOTSTRAP_ALGORITHMS:
+            self.kind = kind
+        else:
+            raise KeyError("Invalid 'kind' argument.")
 
     def fit(self, data, skip=[], y=-1):
+        """Fit the bootstrapper to the target data.
+
+        Parameters
+        ----------
+        data : 2D array
+            Target data. Must be lexicographically sorted.
+        sort : bool
+            Set to false is data is already sorted by row, by default True.
+        skip : list of integers, optional
+            Columns to skip in the bootstrap. Skip columns that were sampled 
+            without replacement from the prior column, by default [].
+        y : int, optional
+            column index of the dependent variable, by default -1
+
+        Raises
+        ------
+        ValueError
+            Raises error if the input data is not a numpy numeric array.
+        AttributeError
+            Raises error if the input data is not a numpy array.
+       
+        """
+        try:
+            if not np.issubdtype(data.dtype, np.number):
+                raise ValueError(
+                    "Bootstrapper can only handle numeric datatypes. Please pre-process your data."
+                )
+        except AttributeError:
+            print(
+                "Bootstrapper can only handle numpy arrays. Please pre-process your data."
+            )
+            raise
+
+        for v in iter(skip):
+            if not isinstance(v, int):
+                raise IndexError(
+                    "skip values must be integers corresponding to column indices."
+                )
+            if v >= data.shape[1] - 1:
+                raise IndexError("skip index out of bounds for this array.")
+
         self.cluster_dict = id_cluster_counts(data[:, :y])
         y %= data.shape[1]
         self.shape = y
@@ -74,7 +116,23 @@ class Bootstrapper:
         for key in skip:
             self.columns_to_resample[key] = False
 
-    def transform(self, data, start=1):
+    def transform(self, data, start: int):
+        """Generate a bootstrapped sample from target data.
+
+        Parameters
+        ----------
+        data : 2D array
+            Target data. Must be sorted by row.
+        start : int
+            Column index of the first column to be bootstrapped.
+
+        Returns
+        -------
+        2D array
+            Array matching target data, but resampled with replacement 
+            according to "kind" argument.
+
+        """
         if self.kind == "weights":
             resampled = nb_reweighter(
                 data,
@@ -98,35 +156,17 @@ class Bootstrapper:
             resampled = nb_reweighter_real(
                 data, self.columns_to_resample, self.cluster_dict, start, self.shape
             )
-        else:
-            raise ValueError('invalid "kind" argument!')
         return resampled
 
 
 class Permuter:
 
-    """
-    Cluster permutation class.
+    """Class for performing cluster-aware permutation on a target column.
 
-    Methods
-    -------
-    fit(data, col_to_permute, exact=False)
-        Fit the permuter to data.
-
-        col_to_permute indicates the column immediately to the right of the
-        shuffled column - i.e. the column that indicates the treated samples.
-
-        exact, if True, will construct a generator that will iterate
-        deterministically through every possible permutation.
-        Note: this functions properly only if there are no clusters
-        in the column, though that might be implemented at a later date.
-        It is typically not that useful.
-
-    transform(data)
-        Generates a permuted sample. If exact is True, permutations will
-        always be generated in a deterministic order, otherwise
-        they will be random.
-
+    Parameters
+    ----------
+    random_state : int or numpy.random.Generator instance, optional
+        Seedable for reproducibility, by default None
     """
 
     def __init__(self, random_state=None):
@@ -135,10 +175,28 @@ class Permuter:
             nb_seed = self.random_generator.integers(low=2 ** 32)
             set_numba_random_state(nb_seed)
 
-    def fit(self, data, col_to_permute, exact=False):
+    def fit(self, data, col_to_permute: int, exact=False):
+        """Fit the permuter to the target data.
+
+        Parameters
+        ----------
+        data : 2D numeric ndarray
+            Target data.
+        col_to_permute : int
+            Index of target column.
+        exact : bool, optional
+            If True, will enumerate all possible permutations and 
+            iterate through them one by one, by default False. Only
+            works if target column has index 0.
+        """
         self.values, self.indexes, self.counts = np.unique(
-            data[:, : col_to_permute + 1], return_index=True, return_counts=True, axis=0
+            data[:, : col_to_permute + 2], return_index=True, return_counts=True, axis=0
         )
+
+        if col_to_permute != 0 and exact is True:
+            raise NotImplementedError(
+                "Exact permutation only available for col_to_permute = 0."
+            )
         self.col_to_permute = col_to_permute
         self.exact = exact
 
@@ -146,16 +204,29 @@ class Permuter:
             self.keys = unique_idx_w_cache(self.values)[-2]
             self.keys = np.append(self.keys, data.shape[0])
         except IndexError:
-            self.keys = unique_idx_w_cache(self.values)[-1]
+            self.keys = np.empty(0)
 
         if self.exact is True:
             col_values = self.values[:, -2].copy()
+            self._len = len(col_values)
             self.iterator = cycle(msp(col_values))
 
         else:
-            self.shuffled_col_values = data[:, self.col_to_permute - 1][self.indexes]
+            self.shuffled_col_values = data[:, self.col_to_permute][self.indexes]
 
     def transform(self, data):
+        """Permute target column in-place.
+
+        Parameters
+        ----------
+        data : 2D numeric ndarray
+            Target data.
+
+        Returns
+        -------
+        data : 2D numeric ndarray
+            Original data with target column shuffled, in a cluster-aware fashion if necessary.
+        """
         if self.exact is False:
             randomized_return(
                 data,
@@ -165,6 +236,10 @@ class Permuter:
                 self.counts,
             )
         else:
-            next_iter = next(self.iterator)
-            iter_return(data, self.col_to_permute, tuple(next_iter), self.counts)
+            if self._len == len(data):
+                data[:, self.col_to_permute] = next(self.iterator)
+            else:
+                iter_return(
+                    data, self.col_to_permute, tuple(next(self.iterator)), self.counts
+                )
         return data
