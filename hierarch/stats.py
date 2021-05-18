@@ -163,7 +163,7 @@ def two_sample_test(
     # first set of permutations is on the original data
     # this helps to prevent getting a p-value of 0
     for k in range(permutations):
-        permute_resample = call_permute(test, treatment_col)
+        permute_resample = call_permute(test)
         null_distribution.append(
             teststat(permute_resample, treatment_col, treatment_labels)
         )
@@ -183,7 +183,7 @@ def two_sample_test(
         # append to null distribution
 
         for k in range(permutations):
-            permute_resample = call_permute(bootstrapped_sample, treatment_col)
+            permute_resample = call_permute(bootstrapped_sample)
             null_distribution.append(
                 teststat(permute_resample, treatment_col, treatment_labels)
             )

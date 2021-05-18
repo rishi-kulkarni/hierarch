@@ -456,67 +456,39 @@ def msp(items):
 
     Taken from @smichr
     """
-
-    def visit(head):
-
-        (rv, j) = ([], head)
-
-        for i in range(N):
-
-            (dat, j) = E[j]
-
-            rv.append(dat)
-
-        return rv
-
     E = list(reversed(sorted([i for i in items])))
 
+    def visit(head):
+        (rv, j) = ([], head)
+        for i in range(N):
+            (dat, j) = E[j]
+            rv.append(dat)
+        return rv
+
     N = len(E)
-
     # put E into linked-list format
-
     (val, nxt) = (0, 1)
-
     for i in range(N):
-
         E[i] = [E[i], i + 1]
-
     E[-1][nxt] = None
-
     head = 0
-
     afteri = N - 1
-
     i = afteri - 1
-
     yield visit(head)
 
     while E[afteri][nxt] is not None or E[afteri][val] < E[head][val]:
-
         j = E[afteri][nxt]  # added to algorithm for clarity
-
         if j is not None and E[i][val] >= E[j][val]:
-
             beforek = afteri
-
         else:
-
             beforek = i
-
         k = E[beforek][nxt]
-
         E[beforek][nxt] = E[k][nxt]
-
         E[k][nxt] = head
-
         if E[k][val] < E[head][val]:
-
             i = k
-
         afteri = E[i][nxt]
-
         head = k
-
         yield visit(head)
 
 
@@ -683,7 +655,7 @@ def class_make_ufunc_list(target, reference, counts):
         for idx, _ in enumerate(ufunc_list):
             ufunc_list[idx] = i
             i += counts[np.all((reference == target[i]), axis=1)][0]
-    
+
     else:
         for idx, _ in enumerate(ufunc_list):
             ufunc_list[idx] = i
