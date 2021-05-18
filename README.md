@@ -121,14 +121,18 @@ print('p-value =', p_val)
 There are a number of parameters that can be used to modify two_sample_test.
 
 ```python
-ha.stats.two_sample_test(data_array, treatment_col, 
-                         teststat="welch", skip=[], 
-                         bootstraps=100, permutations=1000, 
-                         kind = 'weights', return_null=False,
+ha.stats.two_sample_test(data_array, 
+                         treatment_col, 
+                         compare="means", 
+                         skip=None, 
+                         bootstraps=100, 
+                         permutations=1000, 
+                         kind='weights', 
+                         return_null=False,
                          seed=None)
 
 ```
-**teststat**: The default teststat of "welch" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. For flexibility, two_sample_test can take a test statistic function as an argument. 
+**compare**: The default "means" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. For flexibility, two_sample_test can take a test statistic function as an argument. 
 
 **skip**: indicates the indices of columns that should be skipped in the bootstrapping procedure. 
 

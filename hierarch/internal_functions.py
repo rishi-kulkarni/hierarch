@@ -676,24 +676,17 @@ def class_make_ufunc_list(target, reference, counts):
         Indices to reduceat along.
     """
 
-    ufunc_list = np.empty(0, dtype=np.int64)
-
+    ufunc_list = np.empty(len(reference), dtype=np.int64)
     i = 0
 
     if reference.shape[1] > 1:
-
-        while i < target.shape[0]:
-
-            ufunc_list = np.append(ufunc_list, i)
-
+        for idx, _ in enumerate(ufunc_list):
+            ufunc_list[idx] = i
             i += counts[np.all((reference == target[i]), axis=1)][0]
-
+    
     else:
-
-        while i < target.shape[0]:
-
-            ufunc_list = np.append(ufunc_list, i)
-
+        for idx, _ in enumerate(ufunc_list):
+            ufunc_list[idx] = i
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
