@@ -75,13 +75,10 @@ def nb_unique(input_data, axis=0):
     """
 
     # don't want to sort original data
-
     if axis == 1:
-
         data = input_data.T.copy()
 
     else:
-
         data = input_data.copy()
 
     # so we can remember the original indexes of each row
@@ -89,36 +86,25 @@ def nb_unique(input_data, axis=0):
 
     # sort our data AND the original indexes
     for i in range(data.shape[1] - 1, -1, -1):
-
         sorter = data[:, i].argsort(kind="mergesort")
 
         # mergesort to keep associations
-
         data = data[sorter]
-
         orig_idx = orig_idx[sorter]
-
     # get original indexes
     idx = [0]
 
     if data.shape[1] > 1:
-
         bool_idx = ~np.all((data[:-1] == data[1:]), axis=1)
-
         additional_uniques = np.nonzero(bool_idx)[0] + 1
 
     else:
-
         additional_uniques = np.nonzero(~(data[:-1] == data[1:]))[0] + 1
 
     idx = np.append(idx, additional_uniques)
-
     # get counts for each unique row
-
     counts = np.append(idx[1:], data.shape[0])
-
     counts = counts - idx
-
     return data[idx], orig_idx[idx], counts
 
 
@@ -631,7 +617,8 @@ def class_make_ufunc_list(target, reference, counts):
     """Makes a list of indices to perform a ufunc.reduceat operation along.
 
     This is necessary when an aggregation operation is performed
-    while grouping by a column that was resampled.
+    while grouping by a column that was resampled. The target array
+    must be lexsorted.
 
     Parameters
     ----------
