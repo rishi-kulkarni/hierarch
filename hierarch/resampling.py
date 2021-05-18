@@ -20,7 +20,7 @@ class Bootstrapper:
 
     This transformer performs a nested bootstrap on the target data.
     Undefined behavior if the target data is not lexicographically
-    sorted. 
+    sorted.
 
     Parameters
     ----------
@@ -37,7 +37,7 @@ class Bootstrapper:
 
         "indexes" generates a set of new indexes for the dataset.
         Mathematically, this is equivalent to demanding integer weights.
-    
+
 
     Notes
     -----
@@ -51,6 +51,159 @@ class Bootstrapper:
     equivalent after the groupby and aggregate step.
 
     "bayesian" has no reindexing equivalent.
+
+    Examples
+    --------
+    Generate a simple design matrix with dependent variable always equal to 1.
+    >>> from hierarch.power import DataSimulator
+    >>> paramlist = [[1]*2, [0]*6, [0]*18]
+    >>> hierarchy = [2, 3, 3]
+    >>> datagen = DataSimulator(paramlist)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> data
+    array([[1., 1., 1., 1.],
+           [1., 1., 2., 1.],
+           [1., 1., 3., 1.],
+           [1., 2., 1., 1.],
+           [1., 2., 2., 1.],
+           [1., 2., 3., 1.],
+           [1., 3., 1., 1.],
+           [1., 3., 2., 1.],
+           [1., 3., 3., 1.],
+           [2., 1., 1., 1.],
+           [2., 1., 2., 1.],
+           [2., 1., 3., 1.],
+           [2., 2., 1., 1.],
+           [2., 2., 2., 1.],
+           [2., 2., 3., 1.],
+           [2., 3., 1., 1.],
+           [2., 3., 2., 1.],
+           [2., 3., 3., 1.]])
+
+    Generate a bootstrapped sample by resampling column 1, then column 2. The "weights"
+    algorithm multiplies all of the dependent variable values by the resampled weights.
+    Starting at column 1 means that some column 2 clusters might be zero-weighted.
+
+    >>> boot = Bootstrapper(random_state=1, kind="weights")
+    >>> boot.fit(data, skip=None)
+    >>> boot.transform(data, start=1)
+    array([[1., 1., 1., 3.],
+           [1., 1., 2., 0.],
+           [1., 1., 3., 3.],
+           [1., 2., 1., 0.],
+           [1., 2., 2., 0.],
+           [1., 2., 3., 0.],
+           [1., 3., 1., 1.],
+           [1., 3., 2., 1.],
+           [1., 3., 3., 1.],
+           [2., 1., 1., 0.],
+           [2., 1., 2., 0.],
+           [2., 1., 3., 0.],
+           [2., 2., 1., 1.],
+           [2., 2., 2., 1.],
+           [2., 2., 3., 1.],
+           [2., 3., 1., 2.],
+           [2., 3., 2., 3.],
+           [2., 3., 3., 1.]])
+
+    Starting at column 2 means that every column 1 cluster has equal weight.
+
+    >>> boot = Bootstrapper(random_state=1, kind="weights")
+    >>> boot.fit(data, skip=None)
+    >>> boot.transform(data, start=2)
+    array([[1., 1., 1., 2.],
+           [1., 1., 2., 0.],
+           [1., 1., 3., 1.],
+           [1., 2., 1., 0.],
+           [1., 2., 2., 1.],
+           [1., 2., 3., 2.],
+           [1., 3., 1., 2.],
+           [1., 3., 2., 0.],
+           [1., 3., 3., 1.],
+           [2., 1., 1., 1.],
+           [2., 1., 2., 1.],
+           [2., 1., 3., 1.],
+           [2., 2., 1., 1.],
+           [2., 2., 2., 0.],
+           [2., 2., 3., 2.],
+           [2., 3., 1., 1.],
+           [2., 3., 2., 1.],
+           [2., 3., 3., 1.]])
+
+    Skipping column 2 results in only column 1 clusters being resampled.
+
+    >>> boot = Bootstrapper(random_state=1, kind="weights")
+    >>> boot.fit(data, skip=[2])
+    >>> boot.transform(data, start=1)
+    array([[1., 1., 1., 2.],
+           [1., 1., 2., 2.],
+           [1., 1., 3., 2.],
+           [1., 2., 1., 0.],
+           [1., 2., 2., 0.],
+           [1., 2., 3., 0.],
+           [1., 3., 1., 1.],
+           [1., 3., 2., 1.],
+           [1., 3., 3., 1.],
+           [2., 1., 1., 0.],
+           [2., 1., 2., 0.],
+           [2., 1., 3., 0.],
+           [2., 2., 1., 1.],
+           [2., 2., 2., 1.],
+           [2., 2., 3., 1.],
+           [2., 3., 1., 2.],
+           [2., 3., 2., 2.],
+           [2., 3., 3., 2.]])
+
+    Changing the algorithm to "indexes" gives a more familiar result.
+
+    >>> boot = Bootstrapper(random_state=1, kind="indexes")
+    >>> boot.fit(data, skip=None)
+    >>> boot.transform(data, start=1)
+    array([[1., 1., 1., 1.],
+           [1., 1., 1., 1.],
+           [1., 1., 1., 1.],
+           [1., 1., 3., 1.],
+           [1., 1., 3., 1.],
+           [1., 1., 3., 1.],
+           [1., 3., 1., 1.],
+           [1., 3., 2., 1.],
+           [1., 3., 3., 1.],
+           [2., 2., 1., 1.],
+           [2., 2., 2., 1.],
+           [2., 2., 3., 1.],
+           [2., 3., 1., 1.],
+           [2., 3., 1., 1.],
+           [2., 3., 2., 1.],
+           [2., 3., 2., 1.],
+           [2., 3., 2., 1.],
+           [2., 3., 3., 1.]])
+
+    The Bayesian bootstrap is the same as the Efron bootstrap, but allows
+    the resampled weights to take any real value up to the sum of the original
+    weights in that cluster.
+
+    >>> boot = Bootstrapper(random_state=2, kind="bayesian")
+    >>> boot.fit(data, skip=None)
+    >>> boot.transform(data, start=1)
+    array([[1.        , 1.        , 1.        , 0.92438197],
+           [1.        , 1.        , 2.        , 1.65820553],
+           [1.        , 1.        , 3.        , 1.31019207],
+           [1.        , 2.        , 1.        , 3.68556477],
+           [1.        , 2.        , 2.        , 0.782951  ],
+           [1.        , 2.        , 3.        , 0.01428243],
+           [1.        , 3.        , 1.        , 0.03969449],
+           [1.        , 3.        , 2.        , 0.04616013],
+           [1.        , 3.        , 3.        , 0.53856761],
+           [2.        , 1.        , 1.        , 4.4725425 ],
+           [2.        , 1.        , 2.        , 1.83458204],
+           [2.        , 1.        , 3.        , 0.16269176],
+           [2.        , 2.        , 1.        , 0.53223701],
+           [2.        , 2.        , 2.        , 0.37478853],
+           [2.        , 2.        , 3.        , 0.07456895],
+           [2.        , 3.        , 1.        , 0.27616575],
+           [2.        , 3.        , 2.        , 0.11271856],
+           [2.        , 3.        , 3.        , 1.15970489]])
 
     """
 
@@ -76,7 +229,7 @@ class Bootstrapper:
         sort : bool
             Set to false is data is already sorted by row, by default True.
         skip : list of integers, optional
-            Columns to skip in the bootstrap. Skip columns that were sampled 
+            Columns to skip in the bootstrap. Skip columns that were sampled
             without replacement from the prior column, by default [].
         y : int, optional
             column index of the dependent variable, by default -1
@@ -87,7 +240,7 @@ class Bootstrapper:
             Raises error if the input data is not a numpy numeric array.
         AttributeError
             Raises error if the input data is not a numpy array.
-       
+
         """
         try:
             if not np.issubdtype(data.dtype, np.number):
@@ -133,7 +286,7 @@ class Bootstrapper:
         Returns
         -------
         2D array
-            Array matching target data, but resampled with replacement 
+            Array matching target data, but resampled with replacement
             according to "kind" argument.
 
         """
@@ -171,6 +324,79 @@ class Permuter:
     ----------
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
+
+    Examples
+    --------
+    When the column to resample is the first column, Permuter performs an
+    ordinary shuffle. 
+    >>> from hierarch.power import DataSimulator
+    >>> from hierarch.internal_functions import GroupbyMean
+    >>> paramlist = [[1]*2, [0]*6, [0]*18]
+    >>> hierarchy = [2, 3, 3]
+    >>> datagen = DataSimulator(paramlist)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> agg = GroupbyMean()
+    >>> test = agg.fit_transform(data)
+    >>> test
+    array([[1., 1., 1.],
+           [1., 2., 1.],
+           [1., 3., 1.],
+           [2., 1., 1.],
+           [2., 2., 1.],
+           [2., 3., 1.]])
+    
+    Permuter performs an in-place shuffle on the fitted data.
+
+    >>> permute = Permuter(random_state=1)
+    >>> permute.fit(test, col_to_permute=0, exact=False)
+    >>> permute.transform(test)
+    array([[1., 1., 1.],
+           [2., 2., 1.],
+           [1., 3., 1.],
+           [1., 1., 1.],
+           [2., 2., 1.],
+           [2., 3., 1.]])
+
+    If exact=True, Permuter will not repeat a permutation until all possible
+    permutations have been exhausted.
+
+    >>> test = agg.fit_transform(data)
+    >>> permute = Permuter(random_state=1)
+    >>> permute.fit(test, col_to_permute=0, exact=True)
+    >>> permute.transform(test)
+    array([[2., 1., 1.],
+           [2., 2., 1.],
+           [2., 3., 1.],
+           [1., 1., 1.],
+           [1., 2., 1.],
+           [1., 3., 1.]])
+    >>> next(permute.iterator)
+    [1.0, 2.0, 2.0, 2.0, 1.0, 1.0]
+    >>> next(permute.iterator)
+    [2.0, 1.0, 2.0, 2.0, 1.0, 1.0]
+
+    If the column to permute is not 0, Permuter performs a within-cluster shuffle.
+    Note that values of column 1 were shuffled within their column 0 cluster.
+    
+    >>> test = agg.fit_transform(data)
+    >>> permute = Permuter(random_state=2)
+    >>> permute.fit(test, col_to_permute=1, exact=False)
+    >>> permute.transform(test)
+    array([[1., 2., 1.],
+           [1., 1., 1.],
+           [1., 3., 1.],
+           [2., 3., 1.],
+           [2., 2., 1.],
+           [2., 1., 1.]])
+
+    Exact within-cluster permutations are not implemented, but there are typically
+    too many to be worth attempting.
+    >>> permute = Permuter(random_state=2)
+    >>> permute.fit(test, col_to_permute=1, exact=True)
+    Traceback (most recent call last):
+        ...
+    NotImplementedError: Exact permutation only available for col_to_permute = 0.
     """
 
     def __init__(self, random_state=None):
@@ -189,7 +415,7 @@ class Permuter:
         col_to_permute : int
             Index of target column.
         exact : bool, optional
-            If True, will enumerate all possible permutations and 
+            If True, will enumerate all possible permutations and
             iterate through them one by one, by default False. Only
             works if target column has index 0.
         """

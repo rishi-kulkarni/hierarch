@@ -111,7 +111,7 @@ data[columns]
 Next, you can call two_sample_test from hierarch's stats module, which will calculate the p-value. You have to specify what column is the treatment column - in this case, "Condition." Indexing starts at 0, so you input treatment_col=0. In this case, there are only 6c3 = 20 ways to permute the treatment labels, so you should specify "all" permutations be used.
 
 ```python
-p_val = ha.stats.two_sample_test(data, treatment_col=0, bootstraps=500, permutations='all', seed=1)
+p_val = ha.stats.two_sample_test(data, treatment_col=0, bootstraps=500, permutations='all', random_state=1)
 
 print('p-value =', p_val)
 
@@ -129,7 +129,7 @@ ha.stats.two_sample_test(data_array,
                          permutations=1000, 
                          kind='weights', 
                          return_null=False,
-                         seed=None)
+                         random_state=None)
 
 ```
 **compare**: The default "means" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. For flexibility, two_sample_test can take a test statistic function as an argument. 

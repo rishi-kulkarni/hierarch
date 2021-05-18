@@ -20,7 +20,7 @@ def two_sample_test(
     permutations=1000,
     kind="weights",
     return_null=False,
-    seed=None,
+    random_state=None,
 ):
     """Two-tailed two-sample hierarchical permutation test.
 
@@ -64,14 +64,65 @@ def two_sample_test(
     ------
     TypeError
         Raised if input data is not ndarray or DataFrame.
-    IndexError
-        Raised if skip index is out of bounds for the array or not an integer.
     ValueError
         Raised if treatment_col has more than two different labels in it.
     KeyError
         If comparison is a string, it must be in the TEST_STATISTICS dictionary.
     AttributeError
         If comparison is a custom statistic, it must be a function.
+
+    Examples
+    --------
+    >>> from hierarch.power import DataSimulator
+    >>> import scipy.stats as stats
+    >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
+    >>> hierarchy = [2, 4, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=123)
+    >>> datagen.fit(hierarchy)
+
+    Specify the parameters of a dataset with a difference of means of 2.
+    >>> data = datagen.generate()
+    >>> print(data.shape)
+    (24, 4)
+
+    >>> two_sample_test(data, treatment_col=0, 
+    ...                 bootstraps=1000, permutations='all', 
+    ...                 random_state=1)
+    0.03402857142857143
+
+    Instead of an exact test, a number of random permutations can be specified. 
+    In this case there are 70 possible permutations.
+    >>> two_sample_test(data, treatment_col=0, 
+    ...                 bootstraps=1000, permutations=70, 
+    ...                 random_state=1)
+    0.03362857142857143
+
+    The treatment column does not have to be the outermost column.
+
+    >>> paramlist = [[stats.norm], [0, 1]*3, [stats.norm], [stats.norm]]
+    >>> hierarchy = [3, 2, 4, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=123)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> print(data.shape)
+    (72, 5)
+
+    Because of the larger number of possible permutations, it is usually better
+    to reduce the number of bootstraps and increase the number of permutations.
+
+    >>> two_sample_test(data, treatment_col=0, 
+    ...                 bootstraps=100, permutations=1000, 
+    ...                 random_state=1)
+    Traceback (most recent call last):
+        ...
+    ValueError: Needs 2 samples.
+
+    Make sure that treatment_col is set to right column index.
+
+    >>> two_sample_test(data, treatment_col=1, 
+    ...                 bootstraps=100, permutations=1000, 
+    ...                 random_state=1)   
+    0.00285
     """
 
     # turns the input array or dataframe into a float64 array
@@ -81,7 +132,7 @@ def two_sample_test(
         raise TypeError("Input data must be ndarray or DataFrame.")
 
     # set random state
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(random_state)
 
     # enforce lower bound on skip
     if skip is not None:
@@ -211,12 +262,12 @@ def multi_sample_test(
     bootstraps=100,
     permutations=1000,
     kind="weights",
-    seed=None,
+    random_state=None,
 ):
     """Two-tailed multiple-sample hierarchical permutation test.
 
-    Equivalent to a post-hoc test after ANOVA. Results are more interpetable when the input
-    data is in the form of a pandas dataframe or numpy object array.
+    Equivalent to a post-hoc test after ANOVA. Results are more interpetable 
+    when the input data is in the form of a pandas dataframe or numpy object array.
 
     Parameters
     ----------
@@ -263,6 +314,104 @@ def multi_sample_test(
         Raised if input data is not ndarray or DataFrame.
     KeyError
         Raised if specified comparison labels do not exist in the input data.
+
+    Examples
+    --------
+    This function performs pairwise tests akin to a post-hoc test after one-way ANOVA.
+
+    >>> from hierarch.power import DataSimulator
+    >>> import scipy.stats as stats
+    >>> paramlist = [[0, 1, 4, 0], [stats.norm], [stats.norm]]
+    >>> hierarchy = [4, 3, 3]
+
+    This dataset has four treatment conditions, two of which 
+    have the same means (condition 1 and 4). Condition 2 has a
+    slight mean difference from 1 and 4, so this experiment is
+    likely not well-powered to detect it. Condition 3 has a
+    large mean difference from the others, however, and should 
+    return a significant result against all three other conditions.
+
+    >>> datagen = DataSimulator(paramlist, random_state=1)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> data
+    array([[ 1.        ,  1.        ,  1.        , -0.39086989],
+           [ 1.        ,  1.        ,  2.        ,  0.18267424],
+           [ 1.        ,  1.        ,  3.        , -0.13653512],
+           [ 1.        ,  2.        ,  1.        ,  1.42046436],
+           [ 1.        ,  2.        ,  2.        ,  0.86134025],
+           [ 1.        ,  2.        ,  3.        ,  0.52916139],
+           [ 1.        ,  3.        ,  1.        , -0.45147139],
+           [ 1.        ,  3.        ,  2.        ,  0.07324484],
+           [ 1.        ,  3.        ,  3.        ,  0.33857926],
+           [ 2.        ,  1.        ,  1.        , -0.57876014],
+           [ 2.        ,  1.        ,  2.        ,  0.99090658],
+           [ 2.        ,  1.        ,  3.        ,  0.70356708],
+           [ 2.        ,  2.        ,  1.        , -0.80580661],
+           [ 2.        ,  2.        ,  2.        ,  0.01634262],
+           [ 2.        ,  2.        ,  3.        ,  1.73058377],
+           [ 2.        ,  3.        ,  1.        ,  1.02418416],
+           [ 2.        ,  3.        ,  2.        ,  1.66001757],
+           [ 2.        ,  3.        ,  3.        ,  1.6636965 ],
+           [ 3.        ,  1.        ,  1.        ,  5.58088552],
+           [ 3.        ,  1.        ,  2.        ,  2.351026  ],
+           [ 3.        ,  1.        ,  3.        ,  3.08544176],
+           [ 3.        ,  2.        ,  1.        ,  6.62388971],
+           [ 3.        ,  2.        ,  2.        ,  5.2278211 ],
+           [ 3.        ,  2.        ,  3.        ,  5.24418148],
+           [ 3.        ,  3.        ,  1.        ,  3.85056602],
+           [ 3.        ,  3.        ,  2.        ,  2.71649723],
+           [ 3.        ,  3.        ,  3.        ,  4.53203714],
+           [ 4.        ,  1.        ,  1.        ,  0.40314658],
+           [ 4.        ,  1.        ,  2.        , -0.93321956],
+           [ 4.        ,  1.        ,  3.        , -0.38909417],
+           [ 4.        ,  2.        ,  1.        , -0.04362144],
+           [ 4.        ,  2.        ,  2.        , -0.91632938],
+           [ 4.        ,  2.        ,  3.        , -0.06984773],
+           [ 4.        ,  3.        ,  1.        ,  0.64219601],
+           [ 4.        ,  3.        ,  2.        ,  0.58229922],
+           [ 4.        ,  3.        ,  3.        ,  0.04042133]])
+
+    There are six total comparisons that can be made. Condition 1 and 2 are in the first two columns and the p-values are in the
+    final column.
+
+    >>> multi_sample_test(data, treatment_col=0, hypotheses="all",
+    ...                   correction=None, bootstraps=1000,
+    ...                   permutations="all", random_state=111)
+    array([[2.0, 3.0, 0.0355],
+           [1.0, 3.0, 0.0394],
+           [3.0, 4.0, 0.0407],
+           [2.0, 4.0, 0.1477],
+           [1.0, 2.0, 0.4022],
+           [1.0, 4.0, 0.4559]], dtype=object)
+
+    Multiple comparison correction to control False Discovery Rate is advisable in
+    this situation. The final column now shows the q-values, or "adjusted" p-values
+    following the Benjamini-Hochberg procedure.
+
+    >>> multi_sample_test(data, treatment_col=0, hypotheses="all",
+    ...                   correction='fdr', bootstraps=1000,
+    ...                   permutations="all", random_state=111)
+    array([[2.0, 3.0, 0.0355, 0.0814],
+           [1.0, 3.0, 0.0394, 0.0814],
+           [3.0, 4.0, 0.0407, 0.0814],
+           [2.0, 4.0, 0.1477, 0.22155],
+           [1.0, 2.0, 0.4022, 0.4559],
+           [1.0, 4.0, 0.4559, 0.4559]], dtype=object)
+
+    Perhaps the experimenter is not interested in every pairwise comparison - perhaps
+    condition 2 is a control that all other conditions are meant to be compared to. 
+    The comparisons of interest can be specified using a list.
+
+    >>> tests = [[2.0, 1.0], [2.0, 3.0], [2.0, 4.0]]
+    >>> multi_sample_test(data, treatment_col=0, hypotheses=tests,
+    ...                   correction='fdr', bootstraps=1000,
+    ...                   permutations="all", random_state=222)
+    array([[2.0, 3.0, 0.036, 0.108],
+           [2.0, 4.0, 0.1506, 0.2259],
+           [2.0, 1.0, 0.4036, 0.4036]], dtype=object)
+
+
     """
 
     MULTIPLE_COMPARISONS_CORRECTIONS = {
@@ -275,7 +424,7 @@ def multi_sample_test(
             print(correction + " is not a valid multiple comparisons correction.")
             raise
 
-    seed = np.random.default_rng(seed)
+    random_state = np.random.default_rng(random_state)
 
     # coerce data into an object array
     if isinstance(data_array, pd.DataFrame):
@@ -305,7 +454,8 @@ def multi_sample_test(
     # no option to return null distributions because that would be a hassle
     for i in range(len(output)):
         test_idx = np.logical_or(
-            (data[:, 1] == output[i, 0]), (data[:, 1] == output[i, 1])
+            (data[:, treatment_col] == output[i, 0]),
+            (data[:, treatment_col] == output[i, 1]),
         )
         output[i, 2] = two_sample_test(
             data[test_idx],
@@ -315,7 +465,7 @@ def multi_sample_test(
             bootstraps=bootstraps,
             permutations=permutations,
             kind=kind,
-            seed=seed,
+            random_state=random_state,
         )
 
     # sort the output array so that smallest p-values are on top
@@ -421,7 +571,7 @@ def _false_discovery_adjust(pvals, return_index=False):
     # q-value adjustment
     q_vals = np.array(pvals)[sort_key] * len(pvals)
     q_vals /= np.array(range(1, len(pvals) + 1))
-
+    q_vals = np.around(q_vals.astype(float), decimals=5)
     # list of q values must be strictly non-decreasing
     for i in range(len(q_vals) - 1, 0, -1):
         if q_vals[i] < q_vals[i - 1]:
