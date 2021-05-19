@@ -107,6 +107,47 @@ def nb_unique(input_data, axis=0):
     counts = counts - idx
     return data[idx], orig_idx[idx], counts
 
+@nb.jit(nopython=True)
+def bivar_central_moment(x, y, pow=1, ddof=1):
+    """Computes the bivariate central moment.
+
+    Default parameters compute sample covariance. Two-pass algorithm for stability.
+
+    Parameters
+    ----------
+    x, y : 1D array-likes
+        x and y values to be compared
+    pow : int, optional
+        Power to raise each sum to, by default 1
+    ddof : int, optional
+        Degrees of freedom correction, by default 1
+
+    Returns
+    -------
+    float64
+        Product central moment of x, y
+
+    Notes
+    -----
+    This ddof correction is only valid for the first product central moment (covariance).
+    Simply doing ddof=2 does not provide an unbiased estimator for higher order moments.
+    """
+    n = len(x)
+
+    mean_x = mean_y = 0
+    for i in range(n):
+        mean_x += x[i]
+        mean_y += y[i]
+    mean_x /= n
+    mean_y /= n
+
+    sum_of_prods = 0
+    for x_, y_ in np.nditer((x, y)):
+        sum_of_prods += ((x_ - mean_x) ** pow) * ((y_ - mean_y) ** pow)
+
+    moment = sum_of_prods / (n - ddof)
+
+    return moment
 
 @nb.jit(nopython=True, cache=True)
 def welch_statistic(data, col: int, treatment_labels):
@@ -139,25 +180,17 @@ def welch_statistic(data, col: int, treatment_labels):
 
     """
     # get our two samples from the data matrix
-
     sample_a, sample_b = nb_data_grabber(data, col, treatment_labels)
-
     len_a, len_b = len(sample_a), len(sample_b)
 
     # mean difference
-
     meandiff = np.mean(sample_a) - np.mean(sample_b)
-
-    # weighted sample variances - might be able to speed this up
-
-    a_bessel = sample_a.size / (sample_a.size - 1)
-    var_weight_one = (np.var(sample_a) * a_bessel) / len_a
-
-    b_bessel = sample_b.size / (sample_b.size - 1)
-    var_weight_two = (np.var(sample_b) * b_bessel) / len_b
+   
+    # weighted sample variances
+    var_weight_one = bivar_central_moment(sample_a, sample_a, ddof=1) / len_a
+    var_weight_two = bivar_central_moment(sample_b, sample_b, ddof=1) / len_b
 
     # compute t statistic
-
     t = meandiff / np.sqrt(var_weight_one + var_weight_two)
 
     return t
