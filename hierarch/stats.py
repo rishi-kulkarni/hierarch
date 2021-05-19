@@ -34,7 +34,7 @@ def two_sample_test(
         The index number of the column containing "two samples" to be compared.
         Indexing starts at 0.
     compare : str, optional
-        The test statistic to use to perform the hypothesis test. "means" automatically 
+        The test statistic to use to perform the hypothesis test. "means" automatically
         calls the Welch t-statistic for a difference of means test, by default "means"
     skip : list of ints, optional
         Columns to skip in the bootstrap. Skip columns that were sampled
@@ -85,15 +85,15 @@ def two_sample_test(
     >>> print(data.shape)
     (24, 4)
 
-    >>> two_sample_test(data, treatment_col=0, 
-    ...                 bootstraps=1000, permutations='all', 
+    >>> two_sample_test(data, treatment_col=0,
+    ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
     0.03402857142857143
 
-    Instead of an exact test, a number of random permutations can be specified. 
+    Instead of an exact test, a number of random permutations can be specified.
     In this case there are 70 possible permutations.
-    >>> two_sample_test(data, treatment_col=0, 
-    ...                 bootstraps=1000, permutations=70, 
+    >>> two_sample_test(data, treatment_col=0,
+    ...                 bootstraps=1000, permutations=70,
     ...                 random_state=1)
     0.03362857142857143
 
@@ -110,8 +110,8 @@ def two_sample_test(
     Because of the larger number of possible permutations, it is usually better
     to reduce the number of bootstraps and increase the number of permutations.
 
-    >>> two_sample_test(data, treatment_col=0, 
-    ...                 bootstraps=100, permutations=1000, 
+    >>> two_sample_test(data, treatment_col=0,
+    ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
     Traceback (most recent call last):
         ...
@@ -119,9 +119,9 @@ def two_sample_test(
 
     Make sure that treatment_col is set to right column index.
 
-    >>> two_sample_test(data, treatment_col=1, 
-    ...                 bootstraps=100, permutations=1000, 
-    ...                 random_state=1)   
+    >>> two_sample_test(data, treatment_col=1,
+    ...                 bootstraps=100, permutations=1000,
+    ...                 random_state=1)
     0.00285
     """
 
@@ -266,7 +266,7 @@ def multi_sample_test(
 ):
     """Two-tailed multiple-sample hierarchical permutation test.
 
-    Equivalent to a post-hoc test after ANOVA. Results are more interpetable 
+    Equivalent to a post-hoc test after ANOVA. Results are more interpetable
     when the input data is in the form of a pandas dataframe or numpy object array.
 
     Parameters
@@ -303,7 +303,7 @@ def multi_sample_test(
     Returns
     -------
     ndarray
-        numpy ndarray with col 0, 1 corresponding to treatment labels, col 2 corresponding to an uncorrected p-value, 
+        numpy ndarray with col 0, 1 corresponding to treatment labels, col 2 corresponding to an uncorrected p-value,
         and col 3 corresponding to a corrected p-value if a correction was specified.
 
     Raises
@@ -324,11 +324,11 @@ def multi_sample_test(
     >>> paramlist = [[0, 1, 4, 0], [stats.norm], [stats.norm]]
     >>> hierarchy = [4, 3, 3]
 
-    This dataset has four treatment conditions, two of which 
+    This dataset has four treatment conditions, two of which
     have the same means (condition 1 and 4). Condition 2 has a
     slight mean difference from 1 and 4, so this experiment is
     likely not well-powered to detect it. Condition 3 has a
-    large mean difference from the others, however, and should 
+    large mean difference from the others, however, and should
     return a significant result against all three other conditions.
 
     >>> datagen = DataSimulator(paramlist, random_state=1)
@@ -400,7 +400,7 @@ def multi_sample_test(
            [1.0, 4.0, 0.4559, 0.4559]], dtype=object)
 
     Perhaps the experimenter is not interested in every pairwise comparison - perhaps
-    condition 2 is a control that all other conditions are meant to be compared to. 
+    condition 2 is a control that all other conditions are meant to be compared to.
     The comparisons of interest can be specified using a list.
 
     >>> tests = [[2.0, 1.0], [2.0, 3.0], [2.0, 4.0]]
@@ -557,11 +557,11 @@ def _false_discovery_adjust(pvals, return_index=False):
     Journal of the Royal Statistical Society.
     Series B (Methodological) 289–300 (1995).
 
-    The q-values, or "adjusted p-values," are not really p-values. 
-    Rather, each q-value is the minimum FDR you must accept to regard 
+    The q-values, or "adjusted p-values," are not really p-values.
+    Rather, each q-value is the minimum FDR you must accept to regard
     the result of that hypothesis test significant. In that sense, each q-value
     represents the minimum posterior probability that the null hypothesis is
-    true for the comparison of interest. However, q-values are often called 
+    true for the comparison of interest. However, q-values are often called
     adjusted p-values in practice, so we do so here.
 
     """

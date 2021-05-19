@@ -328,7 +328,7 @@ class Permuter:
     Examples
     --------
     When the column to resample is the first column, Permuter performs an
-    ordinary shuffle. 
+    ordinary shuffle.
     >>> from hierarch.power import DataSimulator
     >>> from hierarch.internal_functions import GroupbyMean
     >>> paramlist = [[1]*2, [0]*6, [0]*18]
@@ -345,7 +345,7 @@ class Permuter:
            [2., 1., 1.],
            [2., 2., 1.],
            [2., 3., 1.]])
-    
+
     Permuter performs an in-place shuffle on the fitted data.
 
     >>> permute = Permuter(random_state=1)
@@ -378,7 +378,7 @@ class Permuter:
 
     If the column to permute is not 0, Permuter performs a within-cluster shuffle.
     Note that values of column 1 were shuffled within their column 0 cluster.
-    
+
     >>> test = agg.fit_transform(data)
     >>> permute = Permuter(random_state=2)
     >>> permute.fit(test, col_to_permute=1, exact=False)
