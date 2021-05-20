@@ -52,8 +52,8 @@ def nb_data_grabber(data, col: int, treatment_labels):
 @nb.jit(nopython=True, cache=True)
 def nb_unique(input_data, axis=0):
     """Numba-accelerated 2D np.unique(a, return_index=True, return_counts=True)
-    
-    Appears to asymptotically approach np.unique's speed 
+
+    Appears to asymptotically approach np.unique's speed
     when every row is unique, but otherwise runs faster.
 
     Parameters
@@ -66,10 +66,10 @@ def nb_unique(input_data, axis=0):
     -------
     2D array
         unique rows (or columns) from the input array
-    
+
     1D array of ints
         indices of unique rows (or columns) in input array
-    
+
     1D array of ints
         number of instances of each unique row
     """
@@ -152,6 +152,53 @@ def bivar_central_moment(x, y, pow=1, ddof=1):
 
 
 @nb.jit(nopython=True, cache=True)
+def studentized_covariance(x, y):
+    """Studentized sample covariance between two variables.
+
+    Sample covariance between two variables divided by standard error of
+    sample covariance. Uses an approximation of standard error. This
+    computes an approximately pivotal test statistic.
+
+    Parameters
+    ----------
+    x, y: numeric array-likes
+
+    Returns
+    -------
+    float64
+        Studentized covariance.
+    """
+    n = len(x)
+
+    # numerator is the sample covariance, or the first symmetric bivariate central moment
+    numerator = bivar_central_moment(x, y, pow=1, ddof=1)
+
+    # the denominator is the sample standard deviation of the sample covariance, aka
+    # the standard error of sample covariance. the denominator has three terms.
+
+    # first term is the second symmetric bivariate central moment. an approximate
+    # ddof correction of n - root(2) is applied
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=np.sqrt(2))
+
+    # second term is the product of the standard deviations of x and y over n - 1.
+    # this term rapidly goes to 0 as n goes to infinity
+    denom_2 = (
+        bivar_central_moment(x, x, pow=1, ddof=1)
+        * bivar_central_moment(y, y, pow=1, ddof=1)
+    ) / (n - 1)
+
+    # third term is the square of the covariance of x and y. an approximate ddof
+    # correction of n - root(3) is applied
+    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=np.sqrt(3)) ** 2)) / (
+        n - 1
+    )
+
+    # final computation is numerator * root(n) over root(denom)
+    teststat = (numerator * (n ** 0.5)) / (denom_1 + denom_2 - denom_3) ** 0.5
+    return teststat
+
+
+@nb.jit(nopython=True, cache=True)
 def welch_statistic(data, col: int, treatment_labels):
     """Calculates Welch's t statistic.
 
@@ -177,7 +224,7 @@ def welch_statistic(data, col: int, treatment_labels):
     ----------
     Details on the validity of this test statistic can be found in
     "Studentized permutation tests for non-i.i.d. hypotheses and the
-    generalized Behrens-Fisher problem" by Arnold Janssen. 
+    generalized Behrens-Fisher problem" by Arnold Janssen.
     https://doi.org/10.1016/S0167-7152(97)00043-6.
 
     """
@@ -468,7 +515,7 @@ def msp(items):
     list
         permutation of items
 
-    
+
     Notes
     -----
     Reference: "An O(1) Time Algorithm for Generating Multiset Permutations",
@@ -587,7 +634,7 @@ class GroupbyMean:
             self.reference_dict[i] = (reference, counts.astype(np.int64))
 
     def transform(self, target, iterations=1):
-        """Performs iterative groupby reductions. 
+        """Performs iterative groupby reductions.
 
         Parameters
         ----------
@@ -684,4 +731,3 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
-
