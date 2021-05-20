@@ -156,8 +156,8 @@ def studentized_covariance(x, y):
     """Studentized sample covariance between two variables.
 
     Sample covariance between two variables divided by standard error of
-    sample covariance. Uses an approximation of standard error. This
-    computes an approximately pivotal test statistic.
+    sample covariance. Uses a bias-corrected approximation of standard error. 
+    This computes an approximately pivotal test statistic.
 
     Parameters
     ----------
@@ -177,7 +177,7 @@ def studentized_covariance(x, y):
     # the standard error of sample covariance. the denominator has three terms.
 
     # first term is the second symmetric bivariate central moment. an approximate
-    # ddof correction of n - root(2) is applied
+    # bias correction of n - root(2) is applied
     denom_1 = bivar_central_moment(x, y, pow=2, ddof=np.sqrt(2))
 
     # second term is the product of the standard deviations of x and y over n - 1.
@@ -187,7 +187,7 @@ def studentized_covariance(x, y):
         * bivar_central_moment(y, y, pow=1, ddof=1)
     ) / (n - 1)
 
-    # third term is the square of the covariance of x and y. an approximate ddof
+    # third term is the square of the covariance of x and y. an approximate bias
     # correction of n - root(3) is applied
     denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=np.sqrt(3)) ** 2)) / (
         n - 1
