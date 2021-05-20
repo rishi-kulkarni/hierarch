@@ -107,6 +107,7 @@ def nb_unique(input_data, axis=0):
     counts = counts - idx
     return data[idx], orig_idx[idx], counts
 
+
 @nb.jit(nopython=True)
 def bivar_central_moment(x, y, pow=1, ddof=1):
     """Computes the bivariate central moment.
@@ -142,12 +143,13 @@ def bivar_central_moment(x, y, pow=1, ddof=1):
     mean_y /= n
 
     sum_of_prods = 0
-    for x_, y_ in np.nditer((x, y)):
+    for x_, y_ in zip(x, y):
         sum_of_prods += ((x_ - mean_x) ** pow) * ((y_ - mean_y) ** pow)
 
     moment = sum_of_prods / (n - ddof)
 
     return moment
+
 
 @nb.jit(nopython=True, cache=True)
 def welch_statistic(data, col: int, treatment_labels):
@@ -185,7 +187,7 @@ def welch_statistic(data, col: int, treatment_labels):
 
     # mean difference
     meandiff = np.mean(sample_a) - np.mean(sample_b)
-   
+
     # weighted sample variances
     var_weight_one = bivar_central_moment(sample_a, sample_a, ddof=1) / len_a
     var_weight_two = bivar_central_moment(sample_b, sample_b, ddof=1) / len_b
