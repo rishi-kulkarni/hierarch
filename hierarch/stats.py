@@ -2,13 +2,154 @@ import numpy as np
 import math
 from itertools import combinations
 import pandas as pd
-from hierarch.internal_functions import welch_statistic, preprocess_data, GroupbyMean
+from hierarch.internal_functions import (
+    studentized_covariance,
+    welch_statistic,
+    preprocess_data,
+    GroupbyMean,
+)
 from hierarch.resampling import Bootstrapper, Permuter
 from warnings import warn, simplefilter
 
 TEST_STATISTICS = {
     "means": welch_statistic,
+    "corr": studentized_covariance,
 }
+
+
+def linear_test(
+    data_array,
+    treatment_col: int,
+    compare="corr",
+    skip=None,
+    bootstraps=100,
+    permutations=1000,
+    kind="indexes",
+    return_null=False,
+    random_state=None,
+):
+    if isinstance(data_array, (np.ndarray, pd.DataFrame)):
+        data = preprocess_data(data_array)
+    else:
+        raise TypeError("Input data must be ndarray or DataFrame.")
+
+    # set random state
+    rng = np.random.default_rng(random_state)
+
+    # enforce lower bound on skip
+    if skip is not None:
+        skip = list(skip)
+        for v in reversed(skip):
+            if v <= treatment_col + 1:
+                warn("No need to include columns before treated columns in skip.")
+                skip.remove(v)
+    else:
+        skip = []
+
+    # initialize and fit the bootstrapper to the data
+    bootstrapper = Bootstrapper(random_state=rng, kind=kind)
+    bootstrapper.fit(data, skip=skip)
+
+    # gather labels and raise an exception if there are more than two
+    try:
+        treatment_labels = np.unique(data[:, treatment_col])
+    except IndexError:
+        print("treatment_col must be an integer")
+        raise
+
+    # fetch test statistic from dictionary or, if given a custom test statistic, make sure it is callable
+    if isinstance(compare, str):
+        try:
+            teststat = TEST_STATISTICS[compare]
+        except KeyError:
+            print(
+                "Invalid comparison. Available comparisons are: "
+                + "".join(stat for stat in TEST_STATISTICS.keys())
+            )
+            raise
+    elif not callable(compare):
+        raise AttributeError("Custom test statistics must be callable.")
+
+    # aggregate our data up to the treated level and determine the
+    # observed test statistic
+    aggregator = GroupbyMean()
+    aggregator.fit(data)
+
+    # determine the number of groupby reductions need to be done
+    levels_to_agg = data.shape[1] - treatment_col - 3
+
+    # if levels_to_agg = 0, there are no bootstrap samples to
+    # generate.
+    if (levels_to_agg - len(skip)) == 0 and bootstraps > 1:
+        bootstraps = 1
+        simplefilter("always", UserWarning)
+        warn("No levels to bootstrap. Setting bootstraps to zero.")
+
+    test = data
+    test = aggregator.transform(test, iterations=levels_to_agg)
+    truediff = teststat(test[:, treatment_col], test[:, -1])
+
+    # initialize and fit the permuter to the aggregated data
+    # don't need to seed this, as numba's PRNG state is shared
+    permuter = Permuter()
+
+    if permutations == "all":
+        permuter.fit(test, treatment_col, exact=True)
+
+        # in the exact case, determine and set the total number of
+        # possible permutations
+        counts = np.unique(test[:, 0], return_counts=True)[1]
+        permutations = _binomial(counts.sum(), counts[0])
+
+    else:
+        # just fit the permuter if this is a randomized test
+        permuter.fit(test, treatment_col)
+
+    # skip the dot on the permute function
+    call_permute = permuter.transform
+
+    # initialize empty null distribution list
+    null_distribution = []
+
+    # first set of permutations is on the original data
+    # this helps to prevent getting a p-value of 0
+    for k in range(permutations):
+        permute_resample = call_permute(test)
+        null_distribution.append(
+            teststat(permute_resample[:, treatment_col], permute_resample[:, -1])
+        )
+
+    # already did one set of permutations
+    bootstraps -= 1
+
+    for j in range(bootstraps):
+        # generate a bootstrapped sample and aggregate it up to the
+        # treated level
+        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
+        bootstrapped_sample = aggregator.transform(
+            bootstrapped_sample, iterations=levels_to_agg
+        )
+
+        # generate permuted samples, calculate test statistic,
+        # append to null distribution
+
+        for k in range(permutations):
+            permute_resample = call_permute(bootstrapped_sample)
+            null_distribution.append(
+                teststat(permute_resample[:, treatment_col], permute_resample[:, -1])
+            )
+
+    # two tailed test, so check where absolute values of the null distribution
+    # are greater or equal to the absolute value of the observed difference
+    pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
+        0
+    ].size / len(null_distribution)
+
+    if return_null is True:
+        return pval, null_distribution
+
+    else:
+        return pval
 
 
 def two_sample_test(
