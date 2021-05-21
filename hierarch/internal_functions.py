@@ -167,6 +167,32 @@ def studentized_covariance(x, y):
     -------
     float64
         Studentized covariance.
+
+    Examples
+    --------
+    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
+    ...               [1, 2, 3, 4, 5, 2, 3, 4, 5, 6]])
+    >>> x.T
+    array([[0, 1],
+           [0, 2],
+           [0, 3],
+           [0, 4],
+           [0, 5],
+           [1, 2],
+           [1, 3],
+           [1, 4],
+           [1, 5],
+           [1, 6]])
+    >>> studentized_covariance(x.T[:,0], x.T[:,1])
+    1.0886612007193819
+
+    This is approximately equal to the t-statistic.
+    >>> import scipy.stats as stats    
+    >>> a = np.array([2, 3, 4, 5, 6])
+    >>> b = np.array([1, 2, 3, 4, 5])
+    >>> stats.ttest_ind(a, b, equal_var=False)[0]
+    1.0
+
     """
     n = len(x)
 
@@ -194,8 +220,8 @@ def studentized_covariance(x, y):
     )
 
     # final computation is numerator * root(n) over root(denom)
-    teststat = (numerator * (n ** 0.5)) / (denom_1 + denom_2 - denom_3) ** 0.5
-    return teststat
+    t = (numerator * (n ** 0.5)) / (denom_1 + denom_2 - denom_3) ** 0.5
+    return t
 
 
 @nb.jit(nopython=True, cache=True)
@@ -220,6 +246,33 @@ def welch_statistic(data, col: int, treatment_labels):
     float64
         Welch's t statistic.
 
+    Examples
+    --------
+
+    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
+    ...               [1, 2, 3, 4, 5, 10, 11, 12, 13, 14]])
+    >>> x.T
+    array([[ 0,  1],
+           [ 0,  2],
+           [ 0,  3],
+           [ 0,  4],
+           [ 0,  5],
+           [ 1, 10],
+           [ 1, 11],
+           [ 1, 12],
+           [ 1, 13],
+           [ 1, 14]])
+    >>> welch_statistic(x.T, 0, (0, 1))
+    -9.0
+
+    This uses the same calculation as scipy's ttest function.
+    >>> import scipy.stats as stats
+    >>> a = [1, 2, 3, 4, 5]
+    >>> b = [10, 11, 12, 13, 14]
+    >>> stats.ttest_ind(a, b, equal_var=False)[0]
+    -9.0
+    
+    
     Notes
     ----------
     Details on the validity of this test statistic can be found in

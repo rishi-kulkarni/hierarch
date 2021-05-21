@@ -17,7 +17,7 @@ TEST_STATISTICS = {
 }
 
 
-def linear_test(
+def linear_regression_test(
     data_array,
     treatment_col: int,
     compare="corr",
