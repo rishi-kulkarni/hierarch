@@ -184,7 +184,7 @@ def studentized_covariance(x, y):
            [1, 5],
            [1, 6]])
     >>> studentized_covariance(x.T[:,0], x.T[:,1])
-    1.0886612007193819
+    1.0039690353154482
 
     This is approximately equal to the t-statistic.
     >>> import scipy.stats as stats    
@@ -204,7 +204,7 @@ def studentized_covariance(x, y):
 
     # first term is the second symmetric bivariate central moment. an approximate
     # bias correction of n - root(2) is applied
-    denom_1 = bivar_central_moment(x, y, pow=2, ddof=np.sqrt(2))
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2**0.5)
 
     # second term is the product of the standard deviations of x and y over n - 1.
     # this term rapidly goes to 0 as n goes to infinity
@@ -215,12 +215,11 @@ def studentized_covariance(x, y):
 
     # third term is the square of the covariance of x and y. an approximate bias
     # correction of n - root(3) is applied
-    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=np.sqrt(3)) ** 2)) / (
+    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (
         n - 1
     )
 
-    # final computation is numerator * root(n) over root(denom)
-    t = (numerator * (n ** 0.5)) / (denom_1 + denom_2 - denom_3) ** 0.5
+    t = (numerator) / ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3))**0.5
     return t
 
 
