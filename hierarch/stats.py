@@ -24,7 +24,7 @@ def linear_regression_test(
     skip=None,
     bootstraps=100,
     permutations=1000,
-    kind="indexes",
+    kind="weights",
     return_null=False,
     random_state=None,
 ):
@@ -49,13 +49,6 @@ def linear_regression_test(
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip=skip)
-
-    # gather labels and raise an exception if there are more than two
-    try:
-        treatment_labels = np.unique(data[:, treatment_col])
-    except IndexError:
-        print("treatment_col must be an integer")
-        raise
 
     # fetch test statistic from dictionary or, if given a custom test statistic, make sure it is callable
     if isinstance(compare, str):
