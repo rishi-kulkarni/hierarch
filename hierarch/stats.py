@@ -78,6 +78,52 @@ def linear_regression_test(
     AttributeError
         If comparison is a custom statistic, it must be a function.
 
+    Examples
+    --------
+    >>> from hierarch.power import DataSimulator
+    >>> import scipy.stats as stats
+    >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
+    >>> hierarchy = [2, 4, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=2)
+    >>> datagen.fit(hierarchy)
+
+    Specify the parameters of a dataset with a difference of means of 2.
+    >>> data = datagen.generate()
+    >>> print(data.shape)
+    (24, 4)
+
+    >>> linear_regression_test(data, treatment_col=0,
+    ...                 bootstraps=1000, permutations='all',
+    ...                 random_state=1)
+    0.013714285714285714
+
+    This test should give the same or a very similar p-value to two_sample_test 
+    for datasets with two treatment groups.
+
+    >>> two_sample_test(data, treatment_col=0,
+    ...                 bootstraps=1000, permutations='all',
+    ...                 random_state=1)
+    0.013714285714285714
+
+    This test can handle data with multiple treatment groups that have a 
+    hypothesized linear relationship.
+    
+    >>> paramlist = [[0, 2/3, 4/3, 2], [stats.norm], [stats.norm]]
+    >>> hierarchy = [4, 2, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=2)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> print(data.shape)
+    (24, 4)
+
+    There are 2,520 possible permutations, so choose a subset. 
+
+    >>> linear_regression_test(data, treatment_col=0,
+    ...                 bootstraps=100, permutations=1000,
+    ...                 random_state=1)
+    0.00767
+
+
     """
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
         data = preprocess_data(data_array)
