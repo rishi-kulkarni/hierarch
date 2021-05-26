@@ -28,6 +28,57 @@ def linear_regression_test(
     return_null=False,
     random_state=None,
 ):
+    """Two-tailed hierarchical permutation test for any number of samples
+    with a hypothesized linear relationship.
+
+    Equivalent to calculating a p-value for a slope coefficient in a linear model.
+
+    Parameters
+    ----------
+    data_array : 2D numpy array or pandas DataFrame
+        Array-like containing both the independent and dependent variables to
+        be analyzed. It's assumed that the final (rightmost) column
+        contains the dependent variable values.
+    treatment_col : int
+        The index number of the column containing "two samples" to be compared.
+        Indexing starts at 0.
+    compare : str, optional
+        The test statistic to use to perform the hypothesis test, by default "corr"
+        which automatically calls the studentized covariance test statistic.
+    skip : list of ints, optional
+        Columns to skip in the bootstrap. Skip columns that were sampled
+        without replacement from the prior column, by default None
+    bootstraps : int, optional
+        Number of bootstraps to perform, by default 100. Can be set to 1 for a
+        permutation test without any bootstrapping.
+    permutations : int or "all", optional
+        Number of permutations to perform PER bootstrap sample. "all"
+        for exact test (only works if there are only two treatments), by default 1000
+    kind : str, optional
+        Bootstrap algorithm - see Bootstrapper class, by default "weights"
+    return_null : bool, optional
+        Return the null distribution as well as the p value, by default False
+    seed : int or numpy random Generator, optional
+        Seedable for reproducibility., by default None
+
+    Returns
+    -------
+    float64
+        p-value for the hypothesis test
+
+    list
+        Empirical null distribution used to calculate the p-value        
+
+    Raises
+    ------
+    TypeError
+        Raised if input data is not ndarray or DataFrame.
+    KeyError
+        If comparison is a string, it must be in the TEST_STATISTICS dictionary.
+    AttributeError
+        If comparison is a custom statistic, it must be a function.
+
+    """
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
         data = preprocess_data(data_array)
     else:
