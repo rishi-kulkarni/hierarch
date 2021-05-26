@@ -88,6 +88,7 @@ def linear_regression_test(
     >>> datagen.fit(hierarchy)
 
     Specify the parameters of a dataset with a difference of means of 2.
+
     >>> data = datagen.generate()
     >>> print(data.shape)
     (24, 4)
@@ -312,6 +313,7 @@ def two_sample_test(
     >>> datagen.fit(hierarchy)
 
     Specify the parameters of a dataset with a difference of means of 2.
+
     >>> data = datagen.generate()
     >>> print(data.shape)
     (24, 4)
@@ -323,6 +325,7 @@ def two_sample_test(
 
     Instead of an exact test, a number of random permutations can be specified.
     In this case there are 70 possible permutations.
+    
     >>> two_sample_test(data, treatment_col=0,
     ...                 bootstraps=1000, permutations=70,
     ...                 random_state=1)

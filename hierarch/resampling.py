@@ -55,6 +55,7 @@ class Bootstrapper:
     Examples
     --------
     Generate a simple design matrix with dependent variable always equal to 1.
+
     >>> from hierarch.power import DataSimulator
     >>> paramlist = [[1]*2, [0]*6, [0]*18]
     >>> hierarchy = [2, 3, 3]
@@ -329,6 +330,7 @@ class Permuter:
     --------
     When the column to resample is the first column, Permuter performs an
     ordinary shuffle.
+
     >>> from hierarch.power import DataSimulator
     >>> from hierarch.internal_functions import GroupbyMean
     >>> paramlist = [[1]*2, [0]*6, [0]*18]
@@ -392,6 +394,7 @@ class Permuter:
 
     Exact within-cluster permutations are not implemented, but there are typically
     too many to be worth attempting.
+    
     >>> permute = Permuter(random_state=2)
     >>> permute.fit(test, col_to_permute=1, exact=True)
     Traceback (most recent call last):

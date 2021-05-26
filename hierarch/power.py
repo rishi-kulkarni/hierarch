@@ -13,7 +13,7 @@ class DataSimulator:
         Seedable for reproducibility, by default None
 
     Examples
-    -----
+    --------
     Each sublist in paramlist can either be an integer or a scipy.stats
     random distribution generator. The following lines illustrate a few
     ways of specifying the same parameters (no treatment effect, both
@@ -21,7 +21,6 @@ class DataSimulator:
 
     >>> paramlist = [[0, 0], [[stats.norm]]*6, [stats.norm, 0, 1]]
     >>> paramlist = [[0]*2, [stats.norm], [stats.norm]]
-
 
     """
 
