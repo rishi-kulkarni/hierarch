@@ -120,8 +120,8 @@ def dirichlet(alpha, size=None):
             dirichlet_arr(alpha, out)
             return out
 
-    elif isinstance(size, types.UniTuple):
-        if size is types.UniTuple(types.intp, len(size)):
+    elif isinstance(size, (types.UniTuple)):
+        if isinstance(size, (types.UniTuple)) and isinstance(size.dtype, types.Integer):
 
             def dirichlet_impl(alpha, size=None):
                 """
@@ -134,13 +134,13 @@ def dirichlet(alpha, size=None):
         else:
             raise TypeError(
                 "np.random.dirichlet(): size should be int or "
-                "tuple of ints or None, got %s" % (size,)
+                "tuple of ints or None, got %s" % size
             )
 
     else:
         raise TypeError(
             "np.random.dirichlet(): size should be int or "
-            "tuple of ints or None, got %s" % (size,)
+            "tuple of ints or None, got %s" % size
         )
 
     return dirichlet_impl
