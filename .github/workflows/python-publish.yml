@@ -3,7 +3,7 @@
 
 name: Upload Python Package to PyPi and Conda
 
-on: release, workflow_dispatch
+on: [release, workflow_dispatch]
 
 jobs:
   deploy:
