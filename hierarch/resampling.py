@@ -38,6 +38,12 @@ class Bootstrapper:
         "indexes" generates a set of new indexes for the dataset.
         Mathematically, this is equivalent to demanding integer weights.
 
+    Methods
+    -------
+    fit:
+        Fit the class to a dataset.
+    transform:
+        Generate a bootstrapped sample.
 
     Notes
     -----
@@ -325,7 +331,14 @@ class Permuter:
     ----------
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
-
+    
+    Methods
+    -------
+    fit:
+        Fit the class to a dataset.
+    transform:
+        Generate a permuted sample.
+    
     Examples
     --------
     When the column to resample is the first column, Permuter performs an
