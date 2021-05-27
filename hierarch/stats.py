@@ -559,7 +559,7 @@ def multi_sample_test(
     >>> hierarchy = [4, 3, 3]
 
     This dataset has four treatment conditions, two of which
-    have the same means (condition 1 and 4). Condition 2 has a
+    have the same mean (condition 1 and 4). Condition 2 has a
     slight mean difference from 1 and 4, so this experiment is
     likely not well-powered to detect it. Condition 3 has a
     large mean difference from the others, however, and should
