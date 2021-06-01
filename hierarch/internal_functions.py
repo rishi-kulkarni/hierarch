@@ -325,15 +325,16 @@ def rep_iter_return(data, col_to_permute: int, iterator, counts):
 
 @nb.jit(nopython=True, inline="always")
 def bounded_uint(ub):
-    x = np.random.randint(low=2 ** 32)
+    rand = np.random.randint
+    x = rand(low=2 ** 32)
     m = ub * x
-    l = np.bitwise_and(m, 2 ** 32 - 1)
+    l = m & (2 ** 32 - 1)
     if l < ub:
         t = (2 ** 32 - ub) % ub
         while l < t:
-            x = np.random.randint(low=2 ** 32)
+            x = rand(low=2 ** 32)
             m = ub * x
-            l = np.bitwise_and(m, 2 ** 32 - 1)
+            l = m & (2 ** 32 - 1)
     return m >> 32
 
 
