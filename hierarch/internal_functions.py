@@ -295,32 +295,8 @@ def welch_statistic(data, col: int, treatment_labels):
 
 
 @nb.jit(nopython=True, cache=True)
-def iter_return(data, col_to_permute, iterator):
-    data[:, col_to_permute] = iterator
-    return data
-
-
-@nb.jit(nopython=True, cache=True)
-def rep_iter_return(data, col_to_permute: int, iterator, counts):
-    """In-place shuffles a column based on an input. Cannot be cluster-aware.
-
-    Parameters
-    ----------
-    data : 2D numeric array
-        Target data matrix.
-    col_to_permute : int
-        Index of the column whose values will be permuted.
-    iterator : 1D array-like
-        Values to replace target column with.
-    counts : 1D array-like
-        Number of times each value in iterator should appear in output.
-    """
-
-    # the shuffled column is defined by an input variable
-
-    shuffled_col_values = np.repeat(np.array(iterator), counts)
-    data[:, col_to_permute] = shuffled_col_values
-    return data
+def _repeat(target, counts):
+    return np.repeat(np.array(target), counts)
 
 
 @nb.jit(nopython=True, inline="always")
@@ -355,67 +331,6 @@ def nb_strat_shuffle(arr, stratification):
             j = bounded_uint(i + 1)
             arr[i + v], arr[j + v] = arr[j + v], arr[i + v]
             i -= 1
-
-
-@nb.jit(nopython=True, cache=True)
-def randomized_return(data, col_to_permute: int, keys):
-    """Randomly shuffles a column in-place, in a cluster-aware fashion if necessary.
-
-    Parameters
-    ----------
-    data : 2D numeric array
-        Target data matrix.
-    col_to_permute : int
-        Index of the column whose values will be permuted.
-    keys : 1D array-like
-        Clusters to shuffle within (if col_to_permute > 0).
-    """
-
-    # if there are no clusters, just shuffle the columns
-
-    if col_to_permute == 0:
-        nb_fast_shuffle(data[:, col_to_permute])
-
-    else:
-        nb_strat_shuffle(data[:, col_to_permute], keys)
-
-    return data
-
-
-@nb.jit(nopython=True, cache=True)
-def rep_randomized_return(data, col_to_permute: int, shuffled_col_values, keys, counts):
-    """Randomly shuffles a column in-place, in a cluster-aware fashion if necessary.
-
-    Parameters
-    ----------
-    data : 2D numeric array
-        Target data matrix.
-    col_to_permute : int
-        Index of the column whose values will be permuted.
-    shuffled_col_values : 1D array-like
-        Labels in the column to be permuted.
-    keys : 1D array-like
-        Clusters to shuffle within (if col_to_permute > 0).
-    counts : 1D array-like
-        Number of times each value in shuffled_col_values should appear in output.
-    """
-
-    # if there are no clusters, just shuffle the columns
-
-    if col_to_permute == 0:
-        nb_fast_shuffle(shuffled_col_values)
-
-    # if not, shuffle between the indices in keys
-    else:
-        nb_strat_shuffle(shuffled_col_values, keys)
-
-    # check if the shuffled column needs to be repeated to fit back
-    # into the original matrix
-
-    shuffled_col_values = np.repeat(shuffled_col_values, counts)
-
-    data[:, col_to_permute] = shuffled_col_values
-    return data
 
 
 @nb.jit(nopython=True, cache=True)

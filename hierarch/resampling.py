@@ -8,11 +8,10 @@ from hierarch.internal_functions import (
     nb_unique,
     id_cluster_counts,
     msp,
-    rep_randomized_return,
     set_numba_random_state,
-    iter_return,
-    rep_iter_return,
-    randomized_return,
+    _repeat,
+    nb_fast_shuffle,
+    nb_strat_shuffle,
 )
 
 
@@ -449,22 +448,16 @@ class Permuter:
             )
 
         # transform() is going to be called a lot, so generate a specialized version on the fly
+        # this keeps us from having to do unnecessary flow control
 
         if exact is True:
             col_values = values[:, -2].copy()
             self.iterator = cycle(msp(col_values))
             if len(col_values) == len(data):
-                self.transform = partial(
-                    self._exact_return,
-                    col_to_permute=col_to_permute,
-                    generator=self.iterator,
-                )
+                self.transform = self._exact_return(col_to_permute, self.iterator)
             else:
-                self.transform = partial(
-                    self._exact_repeat_return,
-                    col_to_permute=col_to_permute,
-                    generator=self.iterator,
-                    counts=counts,
+                self.transform = self._exact_repeat_return(
+                    col_to_permute, self.iterator, counts
                 )
 
         else:
@@ -476,27 +469,57 @@ class Permuter:
                 keys = np.empty(0, dtype=np.int64)
 
             if indexes.size == len(data):
-                self.transform = partial(
-                    randomized_return, col_to_permute=col_to_permute, keys=keys,
-                )
+                self.transform = self._random_return(col_to_permute, keys)
 
             else:
-                shuffled_col_values = data[:, col_to_permute][indexes]
-                self.transform = partial(
-                    rep_randomized_return,
-                    col_to_permute=col_to_permute,
-                    shuffled_col_values=shuffled_col_values,
-                    keys=keys,
-                    counts=counts,
+                col_values = data[:, col_to_permute][indexes]
+                self.transform = self._random_repeat_return(
+                    col_to_permute, col_values, keys, counts
                 )
 
     @staticmethod
-    def _exact_return(data, col_to_permute, generator):
-        return iter_return(data, col_to_permute, tuple(next(generator)))
+    def _exact_return(col_to_permute, generator):
+        def _exact_return_impl(data):
+            data[:, col_to_permute] = next(generator)
+            return data
+
+        return _exact_return_impl
 
     @staticmethod
-    def _exact_repeat_return(data, col_to_permute, generator, counts):
-        return rep_iter_return(data, col_to_permute, tuple(next(generator)), counts)
+    def _exact_repeat_return(col_to_permute, generator, counts):
+        def _rep_iter_return_impl(data):
+            data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
+            return data
+
+        return _rep_iter_return_impl
+
+    @staticmethod
+    def _random_return(col_to_permute, keys):
+        @jit(nopython=True, cache=True)
+        def _random_return_impl(data):
+            if col_to_permute == 0:
+                nb_fast_shuffle(data[:, col_to_permute])
+            else:
+                nb_strat_shuffle(data[:, col_to_permute], keys)
+            return data
+
+        return _random_return_impl
+
+    @staticmethod
+    def _random_repeat_return(col_to_permute, col_values, keys, counts):
+        @jit(nopython=True, cache=True)
+        def _random__repeat_return_impl(data):
+            shuffled_col_values = col_values.copy()
+            if col_to_permute == 0:
+                nb_fast_shuffle(shuffled_col_values)
+            else:
+                nb_strat_shuffle(shuffled_col_values, keys)
+
+            shuffled_col_values = np.repeat(shuffled_col_values, counts)
+            data[:, col_to_permute] = shuffled_col_values
+            return data
+
+        return _random__repeat_return_impl
 
     def transform(self, data):
         """Permute target column in-place.
