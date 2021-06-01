@@ -122,7 +122,7 @@ def linear_regression_test(
     >>> linear_regression_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00767
+    0.00675
 
 
     """
@@ -329,7 +329,7 @@ def two_sample_test(
     >>> two_sample_test(data, treatment_col=0,
     ...                 bootstraps=1000, permutations=70,
     ...                 random_state=1)
-    0.03362857142857143
+    0.03357142857142857
 
     The treatment column does not have to be the outermost column.
 
@@ -356,7 +356,7 @@ def two_sample_test(
     >>> two_sample_test(data, treatment_col=1,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00285
+    0.00276
     """
 
     # turns the input array or dataframe into a float64 array

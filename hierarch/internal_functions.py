@@ -1,5 +1,4 @@
 import numpy as np
-from numpy.random import shuffle
 from hierarch import numba_overloads
 import numba as nb
 import pandas as pd
@@ -204,7 +203,7 @@ def studentized_covariance(x, y):
 
     # first term is the second symmetric bivariate central moment. an approximate
     # bias correction of n - root(2) is applied
-    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2**0.5)
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2 ** 0.5)
 
     # second term is the product of the standard deviations of x and y over n - 1.
     # this term rapidly goes to 0 as n goes to infinity
@@ -215,11 +214,9 @@ def studentized_covariance(x, y):
 
     # third term is the square of the covariance of x and y. an approximate bias
     # correction of n - root(3) is applied
-    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (
-        n - 1
-    )
+    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
 
-    t = (numerator) / ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3))**0.5
+    t = (numerator) / ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
     return t
 
 
@@ -298,7 +295,13 @@ def welch_statistic(data, col: int, treatment_labels):
 
 
 @nb.jit(nopython=True, cache=True)
-def iter_return(data, col_to_permute: int, iterator, counts):
+def iter_return(data, col_to_permute, iterator):
+    data[:, col_to_permute] = iterator
+    return data
+
+
+@nb.jit(nopython=True, cache=True)
+def rep_iter_return(data, col_to_permute: int, iterator, counts):
     """In-place shuffles a column based on an input. Cannot be cluster-aware.
 
     Parameters
@@ -316,12 +319,70 @@ def iter_return(data, col_to_permute: int, iterator, counts):
     # the shuffled column is defined by an input variable
 
     shuffled_col_values = np.repeat(np.array(iterator), counts)
-
     data[:, col_to_permute] = shuffled_col_values
+    return data
+
+
+@nb.jit(nopython=True, inline="always")
+def bounded_uint(ub):
+    x = np.random.randint(low=2 ** 32)
+    m = ub * x
+    l = np.bitwise_and(m, 2 ** 32 - 1)
+    if l < ub:
+        t = (2 ** 32 - ub) % ub
+        while l < t:
+            x = np.random.randint(low=2 ** 32)
+            m = ub * x
+            l = np.bitwise_and(m, 2 ** 32 - 1)
+    return m >> 32
 
 
 @nb.jit(nopython=True, cache=True)
-def randomized_return(data, col_to_permute: int, shuffled_col_values, keys, counts):
+def nb_fast_shuffle(arr):
+    i = arr.shape[0] - 1
+    while i > 0:
+        j = bounded_uint(i + 1)
+        arr[i], arr[j] = arr[j], arr[i]
+        i -= 1
+
+
+@nb.jit(nopython=True, cache=True)
+def nb_strat_shuffle(arr, stratification):
+    for v, w in zip(stratification[:-1], stratification[1:]):
+        i = w - v - 1
+        while i > 0:
+            j = bounded_uint(i + 1)
+            arr[i + v], arr[j + v] = arr[j + v], arr[i + v]
+            i -= 1
+
+
+@nb.jit(nopython=True, cache=True)
+def randomized_return(data, col_to_permute: int, keys):
+    """Randomly shuffles a column in-place, in a cluster-aware fashion if necessary.
+
+    Parameters
+    ----------
+    data : 2D numeric array
+        Target data matrix.
+    col_to_permute : int
+        Index of the column whose values will be permuted.
+    keys : 1D array-like
+        Clusters to shuffle within (if col_to_permute > 0).
+    """
+
+    # if there are no clusters, just shuffle the columns
+
+    if col_to_permute == 0:
+        nb_fast_shuffle(data[:, col_to_permute])
+
+    else:
+        nb_strat_shuffle(data[:, col_to_permute], keys)
+
+    return data
+
+
+@nb.jit(nopython=True, cache=True)
+def rep_randomized_return(data, col_to_permute: int, shuffled_col_values, keys, counts):
     """Randomly shuffles a column in-place, in a cluster-aware fashion if necessary.
 
     Parameters
@@ -340,33 +401,20 @@ def randomized_return(data, col_to_permute: int, shuffled_col_values, keys, coun
 
     # if there are no clusters, just shuffle the columns
 
-    if shuffled_col_values.size == data.shape[0]:
+    if col_to_permute == 0:
+        nb_fast_shuffle(shuffled_col_values)
 
-        if col_to_permute == 0:
-            shuffle(data[:, col_to_permute])
-
-        else:
-            for idx in range(len(keys) - 1):
-
-                shuffle(data[:, col_to_permute][keys[idx] : keys[idx + 1]])
-
+    # if not, shuffle between the indices in keys
     else:
-        if col_to_permute == 0:
-            shuffle(shuffled_col_values)
+        nb_strat_shuffle(shuffled_col_values, keys)
 
-        # if not, shuffle between the indices in keys
-        else:
+    # check if the shuffled column needs to be repeated to fit back
+    # into the original matrix
 
-            for idx in range(len(keys) - 1):
+    shuffled_col_values = np.repeat(shuffled_col_values, counts)
 
-                shuffle(shuffled_col_values[keys[idx] : keys[idx + 1]])
-
-        # check if the shuffled column needs to be repeated to fit back
-        # into the original matrix
-
-        shuffled_col_values = np.repeat(shuffled_col_values, counts)
-
-        data[:, col_to_permute] = shuffled_col_values
+    data[:, col_to_permute] = shuffled_col_values
+    return data
 
 
 @nb.jit(nopython=True, cache=True)
