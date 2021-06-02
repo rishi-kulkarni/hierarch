@@ -14,10 +14,6 @@ from hierarch.internal_functions import (
     nb_strat_shuffle,
 )
 
-
-BOOTSTRAP_ALGORITHMS = ["weights", "indexes", "bayesian"]
-
-
 class Bootstrapper:
     """Bootstrapper(random_state=None, kind="weights")
 
@@ -216,6 +212,7 @@ class Bootstrapper:
            [2.        , 3.        , 3.        , 1.15970489]])
 
     """
+    BOOTSTRAP_ALGORITHMS = tuple(["weights", "indexes", "bayesian"])
 
     def __init__(self, random_state=None, kind="weights"):
 
@@ -224,7 +221,7 @@ class Bootstrapper:
         # this makes it both reproducible and thread-safe enough
         nb_seed = self.random_generator.integers(low=2 ** 32 - 1)
         set_numba_random_state(nb_seed)
-        if kind in BOOTSTRAP_ALGORITHMS:
+        if kind in self.BOOTSTRAP_ALGORITHMS:
             self.kind = kind
         else:
             raise KeyError("Invalid 'kind' argument.")
@@ -477,50 +474,6 @@ class Permuter:
                     col_to_permute, col_values, keys, counts
                 )
 
-    @staticmethod
-    def _exact_return(col_to_permute, generator):
-        def _exact_return_impl(data):
-            data[:, col_to_permute] = next(generator)
-            return data
-
-        return _exact_return_impl
-
-    @staticmethod
-    def _exact_repeat_return(col_to_permute, generator, counts):
-        def _rep_iter_return_impl(data):
-            data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
-            return data
-
-        return _rep_iter_return_impl
-
-    @staticmethod
-    def _random_return(col_to_permute, keys):
-        @jit(nopython=True, cache=True)
-        def _random_return_impl(data):
-            if col_to_permute == 0:
-                nb_fast_shuffle(data[:, col_to_permute])
-            else:
-                nb_strat_shuffle(data[:, col_to_permute], keys)
-            return data
-
-        return _random_return_impl
-
-    @staticmethod
-    def _random_repeat_return(col_to_permute, col_values, keys, counts):
-        @jit(nopython=True, cache=True)
-        def _random__repeat_return_impl(data):
-            shuffled_col_values = col_values.copy()
-            if col_to_permute == 0:
-                nb_fast_shuffle(shuffled_col_values)
-            else:
-                nb_strat_shuffle(shuffled_col_values, keys)
-
-            shuffled_col_values = np.repeat(shuffled_col_values, counts)
-            data[:, col_to_permute] = shuffled_col_values
-            return data
-
-        return _random__repeat_return_impl
-
     def transform(self, data):
         """Permute target column in-place.
 
@@ -535,5 +488,60 @@ class Permuter:
             Original data with target column shuffled, in a stratified fashion if necessary.
         """
 
-        # this method is defined on the fly in fit()
+        # this method is defined on the fly in fit() based one of the
+        # four static methods defined below
         raise Exception("Use fit() before calling transform.")
+
+    @staticmethod
+    def _exact_return(col_to_permute, generator):
+        """Transformer when exact is True and permutations are unrestricted.
+        """        
+        def _exact_return_impl(data):
+            data[:, col_to_permute] = next(generator)
+            return data
+
+        return _exact_return_impl
+
+    @staticmethod
+    def _exact_repeat_return(col_to_permute, generator, counts):
+        """Transformer when exact is True and permutations are restricted by
+        repetition of treated entities.
+        """        
+        def _rep_iter_return_impl(data):
+            data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
+            return data
+
+        return _rep_iter_return_impl
+
+    @staticmethod
+    def _random_return(col_to_permute, keys):
+        """Transformer when exact is False and repetition is not required.
+        """           
+        @jit(nopython=True, cache=True)
+        def _random_return_impl(data):
+            if col_to_permute == 0:
+                nb_fast_shuffle(data[:, col_to_permute])
+            else:
+                nb_strat_shuffle(data[:, col_to_permute], keys)
+            return data
+
+        return _random_return_impl
+
+    @staticmethod
+    def _random_repeat_return(col_to_permute, col_values, keys, counts):
+        """Transformer when exact is False and repetition is required.
+        """            
+        @jit(nopython=True, cache=True)
+        def _random__repeat_return_impl(data):
+            shuffled_col_values = col_values.copy()
+            if col_to_permute == 0:
+                nb_fast_shuffle(shuffled_col_values)
+            else:
+                nb_strat_shuffle(shuffled_col_values, keys)
+
+            shuffled_col_values = np.repeat(shuffled_col_values, counts)
+            data[:, col_to_permute] = shuffled_col_values
+            return data
+
+        return _random__repeat_return_impl
+
