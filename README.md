@@ -2,11 +2,11 @@
 
 ## A Hierarchical Resampling Package for Python
 
-Version 0.3
+Version 0.4
 
 hierarch is a package for hierarchical resampling (bootstrapping, permutation) of datasets in Python. Because for loops are ultimately intrinsic to cluster-aware resampling, hierarch uses Numba to accelerate many of its key functions.
 
-hierarch has several functions to assist in performing resampling-based (and therefore distribution-free) hypothesis tests on hierarchical data. Additionally, hierarch can be used to construct power analyses for hierarchical experimental designs. 
+hierarch has several functions to assist in performing resampling-based (and therefore distribution-free) hypothesis tests, confidence interval calculations, and power analyses on hierarchical data.
 
 ## Table of Contents
 
@@ -36,7 +36,6 @@ Design-based randomization tests represents the platinum standard for significan
 * pandas (for importing data)
 * numba
 * scipy (for power analysis)
-* sympy (for jackknifing)
 
 ### Installation
 

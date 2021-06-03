@@ -1020,7 +1020,7 @@ def confidence_interval(
     using the Bayesian bootstrap here helps get tighter confidence intervals with the
     correct coverage without having to massively increase the number of resamples.
 
-    The inversion procedure performed by this function is specified in 
+    The inversion procedure performed by this function is described in detail in 
     "Randomization, Bootstrap and Monte Carlo Methods in Biology" by Bryan FJ Manly.
     https://doi.org/10.1201/9781315273075.
 

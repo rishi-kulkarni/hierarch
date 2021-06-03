@@ -121,6 +121,7 @@ def dirichlet(alpha, size=None):
             return out
 
     elif isinstance(size, (types.UniTuple)) and isinstance(size.dtype, types.Integer):
+
         def dirichlet_impl(alpha, size=None):
             """
             dirichlet(..., size=tuple)

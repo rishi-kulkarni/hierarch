@@ -1,6 +1,5 @@
 import numpy as np
 from itertools import cycle
-from functools import partial
 from numba import jit
 from hierarch.internal_functions import (
     nb_reweighter,
@@ -13,6 +12,7 @@ from hierarch.internal_functions import (
     nb_fast_shuffle,
     nb_strat_shuffle,
 )
+
 
 class Bootstrapper:
     """Bootstrapper(random_state=None, kind="weights")
@@ -212,6 +212,7 @@ class Bootstrapper:
            [2.        , 3.        , 3.        , 1.15970489]])
 
     """
+
     BOOTSTRAP_ALGORITHMS = tuple(["weights", "indexes", "bayesian"])
 
     def __init__(self, random_state=None, kind="weights"):
@@ -495,7 +496,8 @@ class Permuter:
     @staticmethod
     def _exact_return(col_to_permute, generator):
         """Transformer when exact is True and permutations are unrestricted.
-        """        
+        """
+
         def _exact_return_impl(data):
             data[:, col_to_permute] = next(generator)
             return data
@@ -506,7 +508,8 @@ class Permuter:
     def _exact_repeat_return(col_to_permute, generator, counts):
         """Transformer when exact is True and permutations are restricted by
         repetition of treated entities.
-        """        
+        """
+
         def _rep_iter_return_impl(data):
             data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
             return data
@@ -516,7 +519,8 @@ class Permuter:
     @staticmethod
     def _random_return(col_to_permute, keys):
         """Transformer when exact is False and repetition is not required.
-        """           
+        """
+
         @jit(nopython=True, cache=True)
         def _random_return_impl(data):
             if col_to_permute == 0:
@@ -530,7 +534,8 @@ class Permuter:
     @staticmethod
     def _random_repeat_return(col_to_permute, col_values, keys, counts):
         """Transformer when exact is False and repetition is required.
-        """            
+        """
+
         @jit(nopython=True, cache=True)
         def _random__repeat_return_impl(data):
             shuffled_col_values = col_values.copy()
