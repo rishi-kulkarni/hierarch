@@ -151,150 +151,6 @@ def bivar_central_moment(x, y, pow=1, ddof=1):
 
 
 @nb.jit(nopython=True, cache=True)
-def studentized_covariance(x, y):
-    """Studentized sample covariance between two variables.
-
-    Sample covariance between two variables divided by standard error of
-    sample covariance. Uses a bias-corrected approximation of standard error. 
-    This computes an approximately pivotal test statistic.
-
-    Parameters
-    ----------
-    x, y: numeric array-likes
-
-    Returns
-    -------
-    float64
-        Studentized covariance.
-
-    Examples
-    --------
-    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
-    ...               [1, 2, 3, 4, 5, 2, 3, 4, 5, 6]])
-    >>> x.T
-    array([[0, 1],
-           [0, 2],
-           [0, 3],
-           [0, 4],
-           [0, 5],
-           [1, 2],
-           [1, 3],
-           [1, 4],
-           [1, 5],
-           [1, 6]])
-    >>> studentized_covariance(x.T[:,0], x.T[:,1])
-    1.0039690353154482
-
-    This is approximately equal to the t-statistic.
-    >>> import scipy.stats as stats    
-    >>> a = np.array([2, 3, 4, 5, 6])
-    >>> b = np.array([1, 2, 3, 4, 5])
-    >>> stats.ttest_ind(a, b, equal_var=False)[0]
-    1.0
-
-    """
-    n = len(x)
-
-    # numerator is the sample covariance, or the first symmetric bivariate central moment
-    numerator = bivar_central_moment(x, y, pow=1, ddof=1)
-
-    # the denominator is the sample standard deviation of the sample covariance, aka
-    # the standard error of sample covariance. the denominator has three terms.
-
-    # first term is the second symmetric bivariate central moment. an approximate
-    # bias correction of n - root(2) is applied
-    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2 ** 0.5)
-
-    # second term is the product of the standard deviations of x and y over n - 1.
-    # this term rapidly goes to 0 as n goes to infinity
-    denom_2 = (
-        bivar_central_moment(x, x, pow=1, ddof=1)
-        * bivar_central_moment(y, y, pow=1, ddof=1)
-    ) / (n - 1)
-
-    # third term is the square of the covariance of x and y. an approximate bias
-    # correction of n - root(3) is applied
-    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
-
-    t = (numerator) / ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
-    return t
-
-
-@nb.jit(nopython=True, cache=True)
-def welch_statistic(data, col: int, treatment_labels):
-    """Calculates Welch's t statistic.
-
-    Takes a 2D data matrix, a column to classify data by, and the labels
-    corresponding to the data of interest. Assumes that the largest (-1)
-    column in the data matrix is the dependent variable.
-
-    Parameters
-    ----------
-    data : 2D array
-        Data matrix. Assumes last column contains dependent variable values.
-    col : int
-        Target column to be used to divide the dependent variable into two groups.
-    treatment_labels : 1D array-like
-        Labels in target column to be used.
-
-    Returns
-    -------
-    float64
-        Welch's t statistic.
-
-    Examples
-    --------
-
-    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
-    ...               [1, 2, 3, 4, 5, 10, 11, 12, 13, 14]])
-    >>> x.T
-    array([[ 0,  1],
-           [ 0,  2],
-           [ 0,  3],
-           [ 0,  4],
-           [ 0,  5],
-           [ 1, 10],
-           [ 1, 11],
-           [ 1, 12],
-           [ 1, 13],
-           [ 1, 14]])
-    >>> welch_statistic(x.T, 0, (0, 1))
-    -9.0
-
-    This uses the same calculation as scipy's ttest function.
-    >>> import scipy.stats as stats
-    >>> a = [1, 2, 3, 4, 5]
-    >>> b = [10, 11, 12, 13, 14]
-    >>> stats.ttest_ind(a, b, equal_var=False)[0]
-    -9.0
-    
-    
-    Notes
-    ----------
-    Details on the validity of this test statistic can be found in
-    "Studentized permutation tests for non-i.i.d. hypotheses and the
-    generalized Behrens-Fisher problem" by Arnold Janssen.
-    https://doi.org/10.1016/S0167-7152(97)00043-6.
-
-    """
-    # get our two samples from the data matrix
-    sample_a, sample_b = nb_data_grabber(data, col, treatment_labels)
-    len_a, len_b = len(sample_a), len(sample_b)
-
-    # mean difference
-    meandiff = np.mean(sample_a) - np.mean(sample_b)
-
-    # weighted sample variances
-    var_weight_one = bivar_central_moment(sample_a, sample_a, ddof=1) / len_a
-    var_weight_two = bivar_central_moment(sample_b, sample_b, ddof=1) / len_b
-
-    # compute t statistic
-    t = meandiff / np.sqrt(var_weight_one + var_weight_two)
-
-    return t
-
-
-@nb.jit(nopython=True, cache=True)
 def _repeat(target, counts):
     return np.repeat(np.array(target), counts)
 
@@ -747,3 +603,44 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
+
+
+@nb.jit(nopython=True, cache=True)
+def _compute_interval(null, null_data, target_data, treatment_col, interval):
+    lower_bound = (100 - interval) / 200
+    upper_bound = 1 - lower_bound
+
+    x = null_data[:, treatment_col]
+    y = null_data[:, -1]
+
+    denom = _cov_std_error(x, y)
+    lower = np.quantile(null, lower_bound) * denom / bivar_central_moment(x, x)
+    upper = np.quantile(null, upper_bound) * denom / bivar_central_moment(x, x)
+
+    x = target_data[:, treatment_col]
+    y = target_data[:, -1]
+    denom = _cov_std_error(x, y)
+
+    lower = lower + (bivar_central_moment(x, y) / bivar_central_moment(x, x))
+    upper = upper + (bivar_central_moment(x, y) / bivar_central_moment(x, x))
+    return (lower, upper)
+
+
+@nb.jit(nopython=True, cache=True)
+def _cov_std_error(x, y):
+    n = len(x)
+    # first term is the second symmetric bivariate central moment. an approximate
+    # bias correction of n - root(2) is applied
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2 ** 0.5)
+
+    # second term is the product of the standard deviations of x and y over n - 1.
+    # this term rapidly goes to 0 as n goes to infinity
+    denom_2 = (
+        bivar_central_moment(x, x, pow=1, ddof=1)
+        * bivar_central_moment(y, y, pow=1, ddof=1)
+    ) / (n - 1)
+
+    # third term is the square of the covariance of x and y. an approximate bias
+    # correction of n - root(3) is applied
+    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
+    return ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
