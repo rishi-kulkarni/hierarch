@@ -970,7 +970,7 @@ def _false_discovery_adjust(pvals, return_index=False):
 
 
 def confidence_interval(
-    data,
+    data_array,
     treatment_col,
     interval=95.0,
     compare="corr",
@@ -988,7 +988,7 @@ def confidence_interval(
 
     Parameters
     ----------
-    data : 2D numpy array or pandas DataFrame
+    data_array : 2D numpy array or pandas DataFrame
         Array-like containing both the independent and dependent variables to
         be analyzed. It's assumed that the final (rightmost) column
         contains the dependent variable values.
@@ -1088,6 +1088,12 @@ def confidence_interval(
     The dataset was specified to have a true slope of 1, which is within the interval.
 
     """
+
+    # turns the input array or dataframe into a float64 array
+    if isinstance(data_array, (np.ndarray, pd.DataFrame)):
+        data = preprocess_data(data_array)
+    else:
+        raise TypeError("Input data must be ndarray or DataFrame.")
 
     # first compute the null distribution against the null that the effect size is equal to the MLE
     null_imposed_data = data.copy()
