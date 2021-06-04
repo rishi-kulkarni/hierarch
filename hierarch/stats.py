@@ -592,6 +592,8 @@ def two_sample_test(
     # initialize empty null distribution list
     null_distribution = []
 
+    total = bootstraps * permutations
+
     # first set of permutations is on the original data
     # this helps to prevent getting a p-value of 0
     for k in range(permutations):
@@ -625,6 +627,9 @@ def two_sample_test(
     pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
         0
     ].size / len(null_distribution)
+
+    if pval == 0:
+        pval += 1 / (total)
 
     if return_null is True:
         return pval, null_distribution
