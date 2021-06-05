@@ -547,7 +547,6 @@ def two_sample_test(
     elif not isinstance(permutations, int) or permutations < 1:
         raise TypeError("permutations must be 'all' or an integer greater than 0")
 
-
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip=skip)
@@ -995,13 +994,16 @@ def confidence_interval(
     data_array,
     treatment_col,
     interval=95.0,
+    iterations=7,
+    tolerance=1,
     compare="corr",
     skip=None,
-    bootstraps=100,
-    permutations=1000,
+    bootstraps=50,
+    permutations=100,
     kind="bayesian",
     random_state=None,
 ):
+
     """Compute a confidence inverval via test inversion.
 
     Confidence interval can be calculated by inverting the acceptance region of a hypothesis test.
@@ -1019,6 +1021,12 @@ def confidence_interval(
         Indexing starts at 0.
     interval : float, optional
         Percentage value indicating the confidence interval's coverage, by default 95
+    iterations : int, optional
+        Maximum number of times the interval will be refined, by default 7
+    tolerance : float, optional
+        If the delta between the current bounds and the target interval is less than
+        this value, refinement will stop. Setting this number too close to the Monte Carlo
+        error of the underlying hypothesis test will have a negative effect on coverage. 
     compare : str, optional
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
@@ -1039,7 +1047,7 @@ def confidence_interval(
     Returns
     -------
     tuple of floats
-        Confidence interval with the specified coverage.
+        Confidence interval spanning the specified interval.
 
     Notes
     -----
@@ -1067,7 +1075,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.3158282800277328, 6.1236374727640746)
+    (1.3142402418925743, 6.125225510899227)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -1083,7 +1091,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.9, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.9084660904753425, 8.347931843267204)
+    (-2.452406804001683, 9.89187255679354)
 
     hierarch.stats.two_sample_test can be used to generate the null distribution by
     specifying compare = "means". This should return a very similar interval.
@@ -1091,7 +1099,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.3301109121128554, 6.109354840678951)
+    (1.330299483004123, 6.109166269787682)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -1105,11 +1113,13 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.8346525205544293, 1.5558502398469196)
+    (0.7521535040639042, 1.6431732504510854)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
     """
+
+    tests = {"means": two_sample_test, "corr": linear_regression_test}
 
     # turns the input array or dataframe into a float64 array
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
@@ -1117,12 +1127,18 @@ def confidence_interval(
     else:
         raise TypeError("Input data must be ndarray or DataFrame.")
 
+    try:
+        hypothesis_test = tests[compare]
+    except KeyError:
+        raise KeyError("No such comparison.")
+
     # first compute the null distribution against the null that the effect size is equal to the MLE
     null_imposed_data = data.copy()
     levels_to_agg = data.shape[1] - treatment_col - 3
 
     grouper = GroupbyMean()
-    test = grouper.fit_transform(data, iterations=levels_to_agg)
+    grouper.fit(data)
+    test = grouper.transform(data, iterations=levels_to_agg)
     start_slope = bivar_central_moment(
         test[:, treatment_col], test[:, -1]
     ) / bivar_central_moment(test[:, treatment_col], test[:, treatment_col])
@@ -1132,33 +1148,55 @@ def confidence_interval(
     null_imposed_data[:, -1] -= correction
 
     # compute the null distribution for the null hypothesis that the true effect size is equal to the MLE
-    if compare == "corr":
-        _, null = linear_regression_test(
-            null_imposed_data,
-            treatment_col,
-            skip=skip,
-            bootstraps=bootstraps,
-            permutations=permutations,
-            kind=kind,
-            return_null=True,
-            random_state=random_state,
-        )
-    elif compare == "means":
-        _, null = two_sample_test(
-            null_imposed_data,
-            treatment_col,
-            skip=skip,
-            bootstraps=bootstraps,
-            permutations=permutations,
-            kind=kind,
-            return_null=True,
-            random_state=random_state,
-        )
-    else:
-        raise ValueError("No such comparison.")
+    _, null = hypothesis_test(
+        null_imposed_data,
+        treatment_col,
+        skip=skip,
+        bootstraps=bootstraps,
+        permutations=permutations,
+        kind=kind,
+        return_null=True,
+        random_state=random_state,
+    )
 
-    null_agg = grouper.fit_transform(null_imposed_data, iterations=levels_to_agg)
-    target_agg = grouper.fit_transform(data, iterations=levels_to_agg)
+    target_agg = grouper.transform(data, iterations=levels_to_agg)
+
+    # the null distribution has a tendency to underestimate the "true" null's variance
+    # by recomputing it a few times, we get the correct coverage
+    for i in range(iterations - 1):
+
+        null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
+
+        lower, upper = _compute_interval(
+            np.array(null), null_agg, target_agg, treatment_col, interval
+        )
+
+        if np.abs(interval - (1 - _) * 100) < tolerance:
+            break
+
+        null_imposed_data = data.copy()
+        null_imposed_data[:, -1] -= lower * null_imposed_data[:, treatment_col]
+        _, null = hypothesis_test(
+            null_imposed_data,
+            treatment_col,
+            skip=skip,
+            bootstraps=50,
+            permutations=100,
+            kind=kind,
+            return_null=True,
+            random_state=random_state,
+        )
+
+    _, null = hypothesis_test(
+        null_imposed_data,
+        treatment_col,
+        skip=skip,
+        bootstraps=bootstraps,
+        permutations=permutations,
+        kind=kind,
+        return_null=True,
+        random_state=random_state,
+    )
 
     return _compute_interval(
         np.array(null), null_agg, target_agg, treatment_col, interval
