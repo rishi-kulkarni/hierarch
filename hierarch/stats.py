@@ -292,6 +292,15 @@ def linear_regression_test(
     else:
         skip = []
 
+    # enforce bounds on bootstraps and permutations
+    if not isinstance(bootstraps, int) or bootstraps < 1:
+        raise TypeError("bootstraps must be an integer greater than 0")
+    if isinstance(permutations, str):
+        if permutations != "all":
+            raise TypeError("permutations must be 'all' or an integer greater than 0")
+    elif not isinstance(permutations, int) or permutations < 1:
+        raise TypeError("permutations must be 'all' or an integer greater than 0")
+
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip=skip)
@@ -349,6 +358,7 @@ def linear_regression_test(
 
     # initialize empty null distribution list
     null_distribution = []
+    total = bootstraps * permutations
 
     # first set of permutations is on the original data
     # this helps to prevent getting a p-value of 0
@@ -383,6 +393,9 @@ def linear_regression_test(
     pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
         0
     ].size / len(null_distribution)
+
+    if pval == 0:
+        pval += 1 / (total)
 
     if return_null is True:
         return pval, null_distribution
@@ -525,6 +538,16 @@ def two_sample_test(
     else:
         skip = []
 
+    # enforce bounds on bootstraps and permutations
+    if not isinstance(bootstraps, int) or bootstraps < 1:
+        raise TypeError("bootstraps must be an integer greater than 0")
+    if isinstance(permutations, str):
+        if permutations != "all":
+            raise TypeError("permutations must be 'all' or an integer greater than 0")
+    elif not isinstance(permutations, int) or permutations < 1:
+        raise TypeError("permutations must be 'all' or an integer greater than 0")
+
+
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip=skip)
@@ -591,7 +614,6 @@ def two_sample_test(
 
     # initialize empty null distribution list
     null_distribution = []
-
     total = bootstraps * permutations
 
     # first set of permutations is on the original data
@@ -1045,7 +1067,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.314807450602109, 6.124658302189696)
+    (1.3158282800277328, 6.1236374727640746)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -1061,7 +1083,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.9, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.7799704380838381, 8.219436190875793)
+    (-0.9084660904753425, 8.347931843267204)
 
     hierarch.stats.two_sample_test can be used to generate the null distribution by
     specifying compare = "means". This should return a very similar interval.
@@ -1069,7 +1091,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.3290984115978817, 6.110367341193923)
+    (1.3301109121128554, 6.109354840678951)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -1083,7 +1105,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.8317584051133191, 1.5597743222883649)
+    (0.8346525205544293, 1.5558502398469196)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
