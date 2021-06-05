@@ -12,13 +12,6 @@ class DataSimulator:
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
 
-    Methods
-    -------
-    fit:
-        Fit the class to a hierarchical structure.
-    generate:
-        Generate a simulated dataset.
-
     Examples
     --------
     Each sublist in paramlist can either be an integer or a scipy.stats

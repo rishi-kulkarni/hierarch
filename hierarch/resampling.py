@@ -37,13 +37,6 @@ class Bootstrapper:
         "indexes" generates a set of new indexes for the dataset.
         Mathematically, this is equivalent to demanding integer weights.
 
-    Methods
-    -------
-    fit:
-        Fit the class to a dataset.
-    transform:
-        Generate a bootstrapped sample.
-
     Notes
     -----
     These approaches have different outputs - "weights" and "bayesian"
@@ -213,7 +206,9 @@ class Bootstrapper:
 
     """
 
-    BOOTSTRAP_ALGORITHMS = tuple(["weights", "indexes", "bayesian"])
+    #: ("weights", "indexes", "bayesian) The three possible arguments that
+    # can be provided to the "kind" keyword argument.
+    _BOOTSTRAP_ALGORITHMS = tuple(["weights", "indexes", "bayesian"])
 
     def __init__(self, random_state=None, kind="weights"):
 
@@ -222,7 +217,7 @@ class Bootstrapper:
         # this makes it both reproducible and thread-safe enough
         nb_seed = self.random_generator.integers(low=2 ** 32 - 1)
         set_numba_random_state(nb_seed)
-        if kind in self.BOOTSTRAP_ALGORITHMS:
+        if kind in self._BOOTSTRAP_ALGORITHMS:
             self.kind = kind
         else:
             raise KeyError("Invalid 'kind' argument.")
@@ -332,14 +327,7 @@ class Permuter:
     ----------
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
-    
-    Methods
-    -------
-    fit:
-        Fit the class to a dataset.
-    transform:
-        Generate a permuted sample.
-    
+        
     Examples
     --------
     When the column to resample is the first column, Permuter performs an

@@ -432,50 +432,6 @@ def msp(items):
         yield visit(head)
 
 
-def preprocess_data(data):
-    """Performs label encoding without overwriting numerical variables.
-
-    Parameters
-    ----------
-    data : 2D array or pandas DataFrame
-        Data to be encoded.
-
-    Returns
-    -------
-    2D array of float64s
-        An array identical to data, but all elements that cannot be cast
-        to np.float64s replaced with integer values.
-    """
-    # don't want to overwrite data
-    if isinstance(data, np.ndarray):
-
-        encoded = data.copy()
-
-    # coerce dataframe to numpy array
-    elif isinstance(data, pd.DataFrame):
-
-        encoded = data.to_numpy()
-
-    for idx, v in enumerate(encoded.T):
-        # attempt to cast array as floats
-        try:
-            encoded = encoded.astype(np.float64)
-            # if we can cast the array as floats, encoding is complete
-            break
-
-        except ValueError:
-            # if we can't, attempt to cast one column as floats
-            try:
-                encoded[:, idx] = encoded[:, idx].astype(np.float64)
-            # if we still can't, encode that column
-            except ValueError:
-                encoded[:, idx] = np.unique(v, return_inverse=True)[1]
-    # stable sort sort the output by row
-    encoded = np.unique(encoded, axis=0)
-
-    return encoded
-
-
 class GroupbyMean:
     """Class for performing groupby reductions on numpy arrays.
 
