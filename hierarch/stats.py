@@ -1,15 +1,207 @@
 import numpy as np
+from numba import jit
 import math
 from itertools import combinations
 import pandas as pd
 from hierarch.internal_functions import (
-    studentized_covariance,
-    welch_statistic,
-    preprocess_data,
+    nb_data_grabber,
     GroupbyMean,
+    _compute_interval,
+    bivar_central_moment,
 )
 from hierarch.resampling import Bootstrapper, Permuter
 from warnings import warn, simplefilter
+
+
+def preprocess_data(data):
+    """Performs label encoding without overwriting numerical variables.
+
+    Parameters
+    ----------
+    data : 2D array or pandas DataFrame
+        Data to be encoded.
+
+    Returns
+    -------
+    2D array of float64s
+        An array identical to data, but all elements that cannot be cast
+        to np.float64s replaced with integer values.
+    """
+    # don't want to overwrite data
+    if isinstance(data, np.ndarray):
+
+        encoded = data.copy()
+
+    # coerce dataframe to numpy array
+    elif isinstance(data, pd.DataFrame):
+
+        encoded = data.to_numpy()
+
+    for idx, v in enumerate(encoded.T):
+        # attempt to cast array as floats
+        try:
+            encoded = encoded.astype(np.float64)
+            # if we can cast the array as floats, encoding is complete
+            break
+
+        except ValueError:
+            # if we can't, attempt to cast one column as floats
+            try:
+                encoded[:, idx] = encoded[:, idx].astype(np.float64)
+            # if we still can't, encode that column
+            except ValueError:
+                encoded[:, idx] = np.unique(v, return_inverse=True)[1]
+    # stable sort sort the output by row
+    encoded = np.unique(encoded, axis=0)
+
+    return encoded
+
+
+@jit(nopython=True, cache=True)
+def studentized_covariance(x, y):
+    """Studentized sample covariance between two variables.
+
+    Sample covariance between two variables divided by standard error of
+    sample covariance. Uses a bias-corrected approximation of standard error. 
+    This computes an approximately pivotal test statistic.
+
+    Parameters
+    ----------
+    x, y: numeric array-likes
+
+    Returns
+    -------
+    float64
+        Studentized covariance.
+
+    Examples
+    --------
+    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
+    ...               [1, 2, 3, 4, 5, 2, 3, 4, 5, 6]])
+    >>> x.T
+    array([[0, 1],
+           [0, 2],
+           [0, 3],
+           [0, 4],
+           [0, 5],
+           [1, 2],
+           [1, 3],
+           [1, 4],
+           [1, 5],
+           [1, 6]])
+    >>> studentized_covariance(x.T[:,0], x.T[:,1])
+    1.0039690353154482
+
+    This is approximately equal to the t-statistic.
+
+    >>> import scipy.stats as stats    
+    >>> a = np.array([2, 3, 4, 5, 6])
+    >>> b = np.array([1, 2, 3, 4, 5])
+    >>> stats.ttest_ind(a, b, equal_var=False)[0]
+    1.0
+
+    """
+    n = len(x)
+
+    # numerator is the sample covariance, or the first symmetric bivariate central moment
+    numerator = bivar_central_moment(x, y, pow=1, ddof=1)
+
+    # the denominator is the sample standard deviation of the sample covariance, aka
+    # the standard error of sample covariance. the denominator has three terms.
+
+    # first term is the second symmetric bivariate central moment. an approximate
+    # bias correction of n - root(2) is applied
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2 ** 0.5)
+
+    # second term is the product of the standard deviations of x and y over n - 1.
+    # this term rapidly goes to 0 as n goes to infinity
+    denom_2 = (
+        bivar_central_moment(x, x, pow=1, ddof=1)
+        * bivar_central_moment(y, y, pow=1, ddof=1)
+    ) / (n - 1)
+
+    # third term is the square of the covariance of x and y. an approximate bias
+    # correction of n - root(3) is applied
+    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
+
+    t = (numerator) / ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
+    return t
+
+
+@jit(nopython=True, cache=True)
+def welch_statistic(data, col: int, treatment_labels):
+    """Calculates Welch's t statistic.
+
+    Takes a 2D data matrix, a column to classify data by, and the labels
+    corresponding to the data of interest. Assumes that the largest (-1)
+    column in the data matrix is the dependent variable.
+
+    Parameters
+    ----------
+    data : 2D array
+        Data matrix. Assumes last column contains dependent variable values.
+    col : int
+        Target column to be used to divide the dependent variable into two groups.
+    treatment_labels : 1D array-like
+        Labels in target column to be used.
+
+    Returns
+    -------
+    float64
+        Welch's t statistic.
+
+    Examples
+    --------
+
+    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
+    ...               [1, 2, 3, 4, 5, 10, 11, 12, 13, 14]])
+    >>> x.T
+    array([[ 0,  1],
+           [ 0,  2],
+           [ 0,  3],
+           [ 0,  4],
+           [ 0,  5],
+           [ 1, 10],
+           [ 1, 11],
+           [ 1, 12],
+           [ 1, 13],
+           [ 1, 14]])
+    >>> welch_statistic(x.T, 0, (0, 1))
+    -9.0
+
+    This uses the same calculation as scipy's ttest function.
+
+    >>> import scipy.stats as stats
+    >>> a = [1, 2, 3, 4, 5]
+    >>> b = [10, 11, 12, 13, 14]
+    >>> stats.ttest_ind(a, b, equal_var=False)[0]
+    -9.0
+    
+    
+    Notes
+    ----------
+    Details on the validity of this test statistic can be found in
+    "Studentized permutation tests for non-i.i.d. hypotheses and the
+    generalized Behrens-Fisher problem" by Arnold Janssen.
+    https://doi.org/10.1016/S0167-7152(97)00043-6.
+
+    """
+    # get our two samples from the data matrix
+    sample_a, sample_b = nb_data_grabber(data, col, treatment_labels)
+    len_a, len_b = len(sample_a), len(sample_b)
+
+    # mean difference
+    meandiff = np.mean(sample_a) - np.mean(sample_b)
+
+    # weighted sample variances
+    var_weight_one = bivar_central_moment(sample_a, sample_a, ddof=1) / len_a
+    var_weight_two = bivar_central_moment(sample_b, sample_b, ddof=1) / len_b
+
+    # compute t statistic
+    t = meandiff / np.sqrt(var_weight_one + var_weight_two)
+
+    return t
+
 
 TEST_STATISTICS = {
     "means": welch_statistic,
@@ -58,7 +250,7 @@ def linear_regression_test(
         Bootstrap algorithm - see Bootstrapper class, by default "weights"
     return_null : bool, optional
         Return the null distribution as well as the p value, by default False
-    seed : int or numpy random Generator, optional
+    random_state : int or numpy random Generator, optional
         Seedable for reproducibility., by default None
 
     Returns
@@ -80,15 +272,14 @@ def linear_regression_test(
 
     Examples
     --------
+    Specify the parameters of a dataset with a difference of means of 2.
+
     >>> from hierarch.power import DataSimulator
     >>> import scipy.stats as stats
     >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
     >>> hierarchy = [2, 4, 3]
     >>> datagen = DataSimulator(paramlist, random_state=2)
     >>> datagen.fit(hierarchy)
-
-    Specify the parameters of a dataset with a difference of means of 2.
-
     >>> data = datagen.generate()
     >>> print(data.shape)
     (24, 4)
@@ -122,7 +313,7 @@ def linear_regression_test(
     >>> linear_regression_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00767
+    0.00675
 
 
     """
@@ -143,6 +334,15 @@ def linear_regression_test(
                 skip.remove(v)
     else:
         skip = []
+
+    # enforce bounds on bootstraps and permutations
+    if not isinstance(bootstraps, int) or bootstraps < 1:
+        raise TypeError("bootstraps must be an integer greater than 0")
+    if isinstance(permutations, str):
+        if permutations != "all":
+            raise TypeError("permutations must be 'all' or an integer greater than 0")
+    elif not isinstance(permutations, int) or permutations < 1:
+        raise TypeError("permutations must be 'all' or an integer greater than 0")
 
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
@@ -201,6 +401,7 @@ def linear_regression_test(
 
     # initialize empty null distribution list
     null_distribution = []
+    total = bootstraps * permutations
 
     # first set of permutations is on the original data
     # this helps to prevent getting a p-value of 0
@@ -235,6 +436,9 @@ def linear_regression_test(
     pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
         0
     ].size / len(null_distribution)
+
+    if pval == 0:
+        pval += 1 / (total)
 
     if return_null is True:
         return pval, null_distribution
@@ -305,15 +509,14 @@ def two_sample_test(
 
     Examples
     --------
+    Specify the parameters of a dataset with a difference of means of 2.
+
     >>> from hierarch.power import DataSimulator
     >>> import scipy.stats as stats
     >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
     >>> hierarchy = [2, 4, 3]
     >>> datagen = DataSimulator(paramlist, random_state=123)
     >>> datagen.fit(hierarchy)
-
-    Specify the parameters of a dataset with a difference of means of 2.
-
     >>> data = datagen.generate()
     >>> print(data.shape)
     (24, 4)
@@ -329,7 +532,7 @@ def two_sample_test(
     >>> two_sample_test(data, treatment_col=0,
     ...                 bootstraps=1000, permutations=70,
     ...                 random_state=1)
-    0.03362857142857143
+    0.03357142857142857
 
     The treatment column does not have to be the outermost column.
 
@@ -356,7 +559,7 @@ def two_sample_test(
     >>> two_sample_test(data, treatment_col=1,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00285
+    0.00276
     """
 
     # turns the input array or dataframe into a float64 array
@@ -377,6 +580,15 @@ def two_sample_test(
                 skip.remove(v)
     else:
         skip = []
+
+    # enforce bounds on bootstraps and permutations
+    if not isinstance(bootstraps, int) or bootstraps < 1:
+        raise TypeError("bootstraps must be an integer greater than 0")
+    if isinstance(permutations, str):
+        if permutations != "all":
+            raise TypeError("permutations must be 'all' or an integer greater than 0")
+    elif not isinstance(permutations, int) or permutations < 1:
+        raise TypeError("permutations must be 'all' or an integer greater than 0")
 
     # initialize and fit the bootstrapper to the data
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
@@ -444,6 +656,7 @@ def two_sample_test(
 
     # initialize empty null distribution list
     null_distribution = []
+    total = bootstraps * permutations
 
     # first set of permutations is on the original data
     # this helps to prevent getting a p-value of 0
@@ -478,6 +691,9 @@ def two_sample_test(
     pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
         0
     ].size / len(null_distribution)
+
+    if pval == 0:
+        pval += 1 / (total)
 
     if return_null is True:
         return pval, null_distribution
@@ -815,3 +1031,217 @@ def _false_discovery_adjust(pvals, return_index=False):
         return q_vals, sort_key
     else:
         return q_vals
+
+
+def confidence_interval(
+    data_array,
+    treatment_col,
+    interval=95.0,
+    iterations=7,
+    tolerance=1,
+    compare="corr",
+    skip=None,
+    bootstraps=50,
+    permutations=100,
+    kind="bayesian",
+    random_state=None,
+):
+
+    """Compute a confidence inverval via test inversion.
+
+    Confidence interval can be calculated by inverting the acceptance region of a hypothesis test.
+    Using a test statistic that is approximately normally distributed under the null makes this
+    much easier.
+
+    Parameters
+    ----------
+    data_array : 2D numpy array or pandas DataFrame
+        Array-like containing both the independent and dependent variables to
+        be analyzed. It's assumed that the final (rightmost) column
+        contains the dependent variable values.
+    treatment_col : int
+        The index number of the column containing "two samples" to be compared.
+        Indexing starts at 0.
+    interval : float, optional
+        Percentage value indicating the confidence interval's coverage, by default 95
+    iterations : int, optional
+        Maximum number of times the interval will be refined, by default 7
+    tolerance : float, optional
+        If the delta between the current bounds and the target interval is less than
+        this value, refinement will stop. Setting this number too close to the Monte Carlo
+        error of the underlying hypothesis test will have a negative effect on coverage. 
+    compare : str, optional
+        The test statistic to use to perform the hypothesis test, by default "corr"
+        which automatically calls the studentized covariance test statistic.
+    skip : list of ints, optional
+        Columns to skip in the bootstrap. Skip columns that were sampled
+        without replacement from the prior column, by default None
+    bootstraps : int, optional
+        Number of bootstraps to perform, by default 100. Can be set to 1 for a
+        permutation test without any bootstrapping.
+    permutations : int or "all", optional
+        Number of permutations to perform PER bootstrap sample. "all"
+        for exact test (only works if there are only two treatments), by default 1000
+    kind : str, optional
+        Bootstrap algorithm - see Bootstrapper class, by default "bayesian"
+    random_state : int or numpy random Generator, optional
+        Seedable for reproducibility., by default None
+
+    Returns
+    -------
+    tuple of floats
+        Confidence interval spanning the specified interval.
+
+    Notes
+    -----
+    While the Efron bootstrap is the default in most of hierarch's statistical functions,
+    using the Bayesian bootstrap here helps get tighter confidence intervals with the
+    correct coverage without having to massively increase the number of resamples.
+
+    The inversion procedure performed by this function is described in detail in 
+    "Randomization, Bootstrap and Monte Carlo Methods in Biology" by Bryan FJ Manly.
+    https://doi.org/10.1201/9781315273075.
+
+    Examples
+    --------
+    Specify the parameters of a dataset with a difference of means of 2.
+
+    >>> from hierarch.power import DataSimulator
+    >>> import scipy.stats as stats
+    >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
+    >>> hierarchy = [2, 4, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=2)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> print(data.shape)
+    (24, 4)
+
+    >>> confidence_interval(data, treatment_col=0, interval=95, 
+    ...    bootstraps=1000, permutations='all', random_state=1)
+    (1.3142402418925743, 6.125225510899227)
+
+    The true difference is 2, which falls within the interval. We can examine
+    the p-value for the corresponding dataset:
+
+    >>> from hierarch.stats import linear_regression_test
+    >>> linear_regression_test(data, treatment_col=0,
+    ...                 bootstraps=1000, permutations='all',
+    ...                 random_state=1)
+    0.013714285714285714
+
+    This suggests that while the 95% confidence interval does not contain 0, the 99.9%
+    confidence interval should.
+
+    >>> confidence_interval(data, treatment_col=0, interval=99.9, 
+    ...    bootstraps=1000, permutations='all', random_state=1)
+    (-2.452406804001683, 9.89187255679354)
+
+    hierarch.stats.two_sample_test can be used to generate the null distribution by
+    specifying compare = "means". This should return a very similar interval.
+
+    >>> confidence_interval(data, treatment_col=0, interval=95, 
+    ...    compare='means', bootstraps=1000, 
+    ...    permutations='all', random_state=1)
+    (1.330299483004123, 6.109166269787682)
+
+    Setting compare = "corr" will generate a confidence interval for the slope
+    in a regression equation.     
+
+    >>> paramlist = [[0, 1, 2, 3], [stats.norm], [stats.norm]]
+    >>> hierarchy = [4, 4, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=2)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+
+    >>> confidence_interval(data, treatment_col=0, interval=95,
+    ...                 compare='corr', bootstraps=100,
+    ...                 permutations=1000, random_state=1)
+    (0.7521535040639042, 1.6431732504510854)
+
+    The dataset was specified to have a true slope of 1, which is within the interval.
+
+    """
+
+    tests = {"means": two_sample_test, "corr": linear_regression_test}
+
+    # turns the input array or dataframe into a float64 array
+    if isinstance(data_array, (np.ndarray, pd.DataFrame)):
+        data = preprocess_data(data_array)
+    else:
+        raise TypeError("Input data must be ndarray or DataFrame.")
+
+    try:
+        hypothesis_test = tests[compare]
+    except KeyError:
+        raise KeyError("No such comparison.")
+
+    # first compute the null distribution against the null that the effect size is equal to the MLE
+    null_imposed_data = data.copy()
+    levels_to_agg = data.shape[1] - treatment_col - 3
+
+    grouper = GroupbyMean()
+    grouper.fit(data)
+    test = grouper.transform(data, iterations=levels_to_agg)
+    start_slope = bivar_central_moment(
+        test[:, treatment_col], test[:, -1]
+    ) / bivar_central_moment(test[:, treatment_col], test[:, treatment_col])
+
+    # subtract the observed covariance out
+    correction = start_slope * null_imposed_data[:, treatment_col]
+    null_imposed_data[:, -1] -= correction
+
+    # compute the null distribution for the null hypothesis that the true effect size is equal to the MLE
+    _, null = hypothesis_test(
+        null_imposed_data,
+        treatment_col,
+        skip=skip,
+        bootstraps=bootstraps,
+        permutations=permutations,
+        kind=kind,
+        return_null=True,
+        random_state=random_state,
+    )
+
+    target_agg = grouper.transform(data, iterations=levels_to_agg)
+
+    # the null distribution has a tendency to underestimate the "true" null's variance
+    # by recomputing it a few times, we get the correct coverage
+    for i in range(iterations - 1):
+
+        null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
+
+        lower, upper = _compute_interval(
+            np.array(null), null_agg, target_agg, treatment_col, interval
+        )
+
+        if np.abs(interval - (1 - _) * 100) < tolerance:
+            break
+
+        null_imposed_data = data.copy()
+        null_imposed_data[:, -1] -= lower * null_imposed_data[:, treatment_col]
+        _, null = hypothesis_test(
+            null_imposed_data,
+            treatment_col,
+            skip=skip,
+            bootstraps=50,
+            permutations=100,
+            kind=kind,
+            return_null=True,
+            random_state=random_state,
+        )
+
+    _, null = hypothesis_test(
+        null_imposed_data,
+        treatment_col,
+        skip=skip,
+        bootstraps=bootstraps,
+        permutations=permutations,
+        kind=kind,
+        return_null=True,
+        random_state=random_state,
+    )
+
+    return _compute_interval(
+        np.array(null), null_agg, target_agg, treatment_col, interval
+    )
+

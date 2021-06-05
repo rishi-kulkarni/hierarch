@@ -1,8 +1,11 @@
 Reference 
 =========
 
-.. toctree::
-
-    stats.rst
-    power.rst
-    resampling.rst
+.. autosummary::
+    :toctree: _autosummary
+    :template: custom-module-template.rst
+    :recursive:
+ 
+    hierarch.stats
+    hierarch.power
+    hierarch.resampling

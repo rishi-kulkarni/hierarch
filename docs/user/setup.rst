@@ -8,7 +8,6 @@ Dependencies
 * pandas (for importing data)
 * numba
 * scipy (for power analysis)
-* sympy (for jackknifing)
 
 Installation
 ------------

@@ -1,5 +1,6 @@
 import numpy as np
 from itertools import cycle
+from numba import jit
 from hierarch.internal_functions import (
     nb_reweighter,
     nb_reweighter_real,
@@ -7,12 +8,10 @@ from hierarch.internal_functions import (
     id_cluster_counts,
     msp,
     set_numba_random_state,
-    iter_return,
-    randomized_return,
+    _repeat,
+    nb_fast_shuffle,
+    nb_strat_shuffle,
 )
-
-
-BOOTSTRAP_ALGORITHMS = ["weights", "indexes", "bayesian"]
 
 
 class Bootstrapper:
@@ -37,13 +36,6 @@ class Bootstrapper:
 
         "indexes" generates a set of new indexes for the dataset.
         Mathematically, this is equivalent to demanding integer weights.
-
-    Methods
-    -------
-    fit:
-        Fit the class to a dataset.
-    transform:
-        Generate a bootstrapped sample.
 
     Notes
     -----
@@ -214,6 +206,10 @@ class Bootstrapper:
 
     """
 
+    #: ("weights", "indexes", "bayesian) The three possible arguments that
+    # can be provided to the "kind" keyword argument.
+    _BOOTSTRAP_ALGORITHMS = tuple(["weights", "indexes", "bayesian"])
+
     def __init__(self, random_state=None, kind="weights"):
 
         self.random_generator = np.random.default_rng(random_state)
@@ -221,7 +217,7 @@ class Bootstrapper:
         # this makes it both reproducible and thread-safe enough
         nb_seed = self.random_generator.integers(low=2 ** 32 - 1)
         set_numba_random_state(nb_seed)
-        if kind in BOOTSTRAP_ALGORITHMS:
+        if kind in self._BOOTSTRAP_ALGORITHMS:
             self.kind = kind
         else:
             raise KeyError("Invalid 'kind' argument.")
@@ -331,14 +327,7 @@ class Permuter:
     ----------
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
-    
-    Methods
-    -------
-    fit:
-        Fit the class to a dataset.
-    transform:
-        Generate a permuted sample.
-    
+        
     Examples
     --------
     When the column to resample is the first column, Permuter performs an
@@ -366,12 +355,12 @@ class Permuter:
     >>> permute = Permuter(random_state=1)
     >>> permute.fit(test, col_to_permute=0, exact=False)
     >>> permute.transform(test)
-    array([[1., 1., 1.],
+    array([[2., 1., 1.],
            [2., 2., 1.],
            [1., 3., 1.],
-           [1., 1., 1.],
-           [2., 2., 1.],
-           [2., 3., 1.]])
+           [2., 1., 1.],
+           [1., 2., 1.],
+           [1., 3., 1.]])
 
     If exact=True, Permuter will not repeat a permutation until all possible
     permutations have been exhausted.
@@ -398,12 +387,12 @@ class Permuter:
     >>> permute = Permuter(random_state=2)
     >>> permute.fit(test, col_to_permute=1, exact=False)
     >>> permute.transform(test)
-    array([[1., 2., 1.],
-           [1., 1., 1.],
+    array([[1., 1., 1.],
+           [1., 2., 1.],
            [1., 3., 1.],
-           [2., 3., 1.],
            [2., 2., 1.],
-           [2., 1., 1.]])
+           [2., 1., 1.],
+           [2., 3., 1.]])
 
     Exact within-cluster permutations are not implemented, but there are typically
     too many to be worth attempting.
@@ -435,7 +424,7 @@ class Permuter:
             iterate through them one by one, by default False. Only
             works if target column has index 0.
         """
-        self.values, self.indexes, self.counts = np.unique(
+        values, indexes, counts = np.unique(
             data[:, : col_to_permute + 2], return_index=True, return_counts=True, axis=0
         )
 
@@ -443,23 +432,36 @@ class Permuter:
             raise NotImplementedError(
                 "Exact permutation only available for col_to_permute = 0."
             )
-        self.col_to_permute = col_to_permute
-        self.exact = exact
 
-        try:
-            self.values[:, -3]
-            self.keys = nb_unique(self.values[:, :-2])[1]
-            self.keys = np.append(self.keys, data.shape[0])
-        except IndexError:
-            self.keys = np.empty(0)
+        # transform() is going to be called a lot, so generate a specialized version on the fly
+        # this keeps us from having to do unnecessary flow control
 
-        if self.exact is True:
-            col_values = self.values[:, -2].copy()
-            self._len = len(col_values)
+        if exact is True:
+            col_values = values[:, -2].copy()
             self.iterator = cycle(msp(col_values))
+            if len(col_values) == len(data):
+                self.transform = self._exact_return(col_to_permute, self.iterator)
+            else:
+                self.transform = self._exact_repeat_return(
+                    col_to_permute, self.iterator, counts
+                )
 
         else:
-            self.shuffled_col_values = data[:, self.col_to_permute][self.indexes]
+            try:
+                values[:, -3]
+                keys = nb_unique(values[:, :-2])[1]
+                keys = np.append(keys, data.shape[0])
+            except IndexError:
+                keys = np.empty(0, dtype=np.int64)
+
+            if indexes.size == len(data):
+                self.transform = self._random_return(col_to_permute, keys)
+
+            else:
+                col_values = data[:, col_to_permute][indexes]
+                self.transform = self._random_repeat_return(
+                    col_to_permute, col_values, keys, counts
+                )
 
     def transform(self, data):
         """Permute target column in-place.
@@ -472,21 +474,67 @@ class Permuter:
         Returns
         -------
         data : 2D numeric ndarray
-            Original data with target column shuffled, in a cluster-aware fashion if necessary.
+            Original data with target column shuffled, in a stratified fashion if necessary.
         """
-        if self.exact is False:
-            randomized_return(
-                data,
-                self.col_to_permute,
-                self.shuffled_col_values,
-                self.keys,
-                self.counts,
-            )
-        else:
-            if self._len == len(data):
-                data[:, self.col_to_permute] = next(self.iterator)
+
+        # this method is defined on the fly in fit() based one of the
+        # four static methods defined below
+        raise Exception("Use fit() before calling transform.")
+
+    @staticmethod
+    def _exact_return(col_to_permute, generator):
+        """Transformer when exact is True and permutations are unrestricted.
+        """
+
+        def _exact_return_impl(data):
+            data[:, col_to_permute] = next(generator)
+            return data
+
+        return _exact_return_impl
+
+    @staticmethod
+    def _exact_repeat_return(col_to_permute, generator, counts):
+        """Transformer when exact is True and permutations are restricted by
+        repetition of treated entities.
+        """
+
+        def _rep_iter_return_impl(data):
+            data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
+            return data
+
+        return _rep_iter_return_impl
+
+    @staticmethod
+    def _random_return(col_to_permute, keys):
+        """Transformer when exact is False and repetition is not required.
+        """
+
+        @jit(nopython=True, cache=True)
+        def _random_return_impl(data):
+            if col_to_permute == 0:
+                nb_fast_shuffle(data[:, col_to_permute])
             else:
-                iter_return(
-                    data, self.col_to_permute, tuple(next(self.iterator)), self.counts
-                )
-        return data
+                nb_strat_shuffle(data[:, col_to_permute], keys)
+            return data
+
+        return _random_return_impl
+
+    @staticmethod
+    def _random_repeat_return(col_to_permute, col_values, keys, counts):
+        """Transformer when exact is False and repetition is required.
+        """
+
+        @jit(nopython=True, cache=True)
+        def _random__repeat_return_impl(data):
+            shuffled_col_values = col_values.copy()
+            if col_to_permute == 0:
+                nb_fast_shuffle(shuffled_col_values)
+            else:
+                nb_strat_shuffle(shuffled_col_values, keys)
+
+            shuffled_col_values = np.repeat(shuffled_col_values, counts)
+            data[:, col_to_permute] = shuffled_col_values
+            return data
+
+        return _random__repeat_return_impl
+
