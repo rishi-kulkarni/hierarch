@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="hierarch",
-    version="1.0.0",
+    version="1.0.1",
     author="Rishi Kulkarni",
     author_email="rkulk@stanford.edu",
     description="Hierarchical hypothesis testing library",
@@ -15,8 +15,8 @@ setuptools.setup(
     url="https://github.com/rishi-kulkarni/hierarch",
     packages=setuptools.find_packages(),
     install_requires=[
-        "numpy>=1.20.3",
-        "scipy>=1.6.3",
+        "numpy>=1.20.2",
+        "scipy>=1.6.2",
         "numba>=0.53.1",
         "pandas>=1.2.4",
     ],
