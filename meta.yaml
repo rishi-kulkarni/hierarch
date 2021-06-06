@@ -1,0 +1,45 @@
+{% set name = "hierarch" %}
+{% set version = "1.0.1" %}
+
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/hierarch-{{ version }}.tar.gz
+  sha256: 26a24993a5777e3e9ffa52cf899d8b381ef64693e2302bd2a9f4e9b5ba62507d
+
+build:
+  number: 0
+  noarch: python
+  script: {{ PYTHON }} -m pip install . -vv
+
+requirements:
+  host:
+    - pip
+    - python >=3.7
+  run:
+    - numba >=0.53.1
+    - numpy >=1.20.2
+    - pandas >=1.2.4
+    - python >=3.7
+    - scipy >=1.6.2
+
+test:
+  imports:
+    - hierarch
+  commands:
+    - pip check
+  requires:
+    - pip
+
+about:
+  home: https://github.com/rishi-kulkarni/hierarch
+  summary: Hierarchical hypothesis testing library
+  license: MIT
+  license_file: LICENSE.txt
+
+extra:
+  recipe-maintainers:
+    - rishi-kulkarni

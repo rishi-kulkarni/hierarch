@@ -157,16 +157,19 @@ def _repeat(target, counts):
 
 @nb.jit(nopython=True, inline="always")
 def bounded_uint(ub):
-    rand = np.random.randint
-    x = rand(low=2 ** 32)
+    x = np.random.randint(low=2 ** 32)
     m = ub * x
-    l = m & (2 ** 32 - 1)
+    l = np.uint32(m)
     if l < ub:
-        t = (2 ** 32 - ub) % ub
+        t = -np.uint32(ub)
+        if t >= ub:
+            t -= ub
+            if t >= ub:
+                t %= ub
         while l < t:
-            x = rand(low=2 ** 32)
+            x = np.random.randint(low=2 ** 32)
             m = ub * x
-            l = m & (2 ** 32 - 1)
+            l = np.uint32(m)
     return m >> 32
 
 
