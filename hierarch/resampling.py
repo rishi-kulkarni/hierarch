@@ -450,7 +450,7 @@ class Permuter:
             try:
                 values[:, -3]
                 keys = nb_unique(values[:, :-2])[1]
-                keys = np.append(keys, data.shape[0])
+                keys = np.append(keys, values[:, -3].shape[0])
             except IndexError:
                 keys = np.empty(0, dtype=np.int64)
 
@@ -509,13 +509,17 @@ class Permuter:
         """Transformer when exact is False and repetition is not required.
         """
 
-        @jit(nopython=True, cache=True)
-        def _random_return_impl(data):
-            if col_to_permute == 0:
+        if col_to_permute == 0:
+
+            def _random_return_impl(data):
                 nb_fast_shuffle(data[:, col_to_permute])
-            else:
+                return data
+
+        else:
+
+            def _random_return_impl(data):
                 nb_strat_shuffle(data[:, col_to_permute], keys)
-            return data
+                return data
 
         return _random_return_impl
 
@@ -524,17 +528,21 @@ class Permuter:
         """Transformer when exact is False and repetition is required.
         """
 
-        @jit(nopython=True, cache=True)
-        def _random__repeat_return_impl(data):
-            shuffled_col_values = col_values.copy()
-            if col_to_permute == 0:
+        if col_to_permute == 0:
+
+            def _random_repeat_return_impl(data):
+                shuffled_col_values = col_values.copy()
                 nb_fast_shuffle(shuffled_col_values)
-            else:
+                data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
+                return data
+
+        else:
+
+            def _random_repeat_return_impl(data):
+                shuffled_col_values = col_values.copy()
                 nb_strat_shuffle(shuffled_col_values, keys)
+                data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
+                return data
 
-            shuffled_col_values = np.repeat(shuffled_col_values, counts)
-            data[:, col_to_permute] = shuffled_col_values
-            return data
-
-        return _random__repeat_return_impl
+        return _random_repeat_return_impl
 
