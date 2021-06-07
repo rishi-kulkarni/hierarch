@@ -1118,7 +1118,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.3142402418925743, 6.125225510899227)
+    (1.3115460911999124, 6.127919661591889)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -1129,12 +1129,12 @@ def confidence_interval(
     ...                 random_state=1)
     0.013714285714285714
 
-    This suggests that while the 95% confidence interval does not contain 0, the 99.9%
+    This suggests that while the 95% confidence interval does not contain 0, the 99.5%
     confidence interval should.
 
-    >>> confidence_interval(data, treatment_col=0, interval=99.9, 
+    >>> confidence_interval(data, treatment_col=0, interval=99.5, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-2.452406804001683, 9.89187255679354)
+    (-0.8244232537686278, 8.263889006560444)
 
     hierarch.stats.two_sample_test can be used to generate the null distribution by
     specifying compare = "means". This should return a very similar interval.
@@ -1142,7 +1142,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.330299483004123, 6.109166269787682)
+    (1.3276550823430782, 6.111810670448726)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -1156,7 +1156,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.7521535040639042, 1.6431732504510854)
+    (0.75098670099828, 1.6445035110667694)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -1206,42 +1206,43 @@ def confidence_interval(
 
     # the null distribution has a tendency to underestimate the "true" null's variance
     # by recomputing it a few times, we get the correct coverage
-    for i in range(iterations - 1):
 
-        null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
+    if np.abs(interval - (1 - _) * 100) >= tolerance:
 
-        lower, upper = _compute_interval(
-            np.array(null), null_agg, target_agg, treatment_col, interval
-        )
+        for i in range(iterations - 1):
 
-        if np.abs(interval - (1 - _) * 100) < tolerance:
-            break
+            null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
 
-        null_imposed_data = data.copy()
-        null_imposed_data[:, -1] -= lower * null_imposed_data[:, treatment_col]
-        _, null = hypothesis_test(
-            null_imposed_data,
-            treatment_col,
-            skip=skip,
-            bootstraps=50,
-            permutations=100,
-            kind=kind,
-            return_null=True,
-            random_state=random_state,
-        )
+            lower, upper = _compute_interval(
+                np.array(null), null_agg, target_agg, treatment_col, interval
+            )
 
-    _, null = hypothesis_test(
-        null_imposed_data,
-        treatment_col,
-        skip=skip,
-        bootstraps=bootstraps,
-        permutations=permutations,
-        kind=kind,
-        return_null=True,
-        random_state=random_state,
-    )
+            null_imposed_data = data.copy()
+            null_imposed_data[:, -1] -= lower * null_imposed_data[:, treatment_col]
+            _, null = hypothesis_test(
+                null_imposed_data,
+                treatment_col,
+                skip=skip,
+                bootstraps=bootstraps,
+                permutations=permutations,
+                kind=kind,
+                return_null=True,
+                random_state=random_state,
+            )
+
+            if np.abs(interval - (1 - _) * 100) < tolerance:
+                break
+        else:
+            warn(" ".join(["p:", str(_), "failed to converge"]), ConvergenceWarning)
 
     return _compute_interval(
         np.array(null), null_agg, target_agg, treatment_col, interval
     )
 
+
+class ConvergenceWarning(Warning):
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return repr(self.message)
