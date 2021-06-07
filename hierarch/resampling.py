@@ -509,7 +509,7 @@ class Permuter:
         """Transformer when exact is False and repetition is not required.
         """
 
-        @jit(nopython=True)
+        @jit(nopython=True, cache=True)
         def _random_return_impl(data):
             if col_to_permute == 0:
                 nb_fast_shuffle(data[:, col_to_permute])
@@ -524,7 +524,7 @@ class Permuter:
         """Transformer when exact is False and repetition is required.
         """
 
-        @jit(nopython=True)
+        @jit(nopython=True, cache=True)
         def _random__repeat_return_impl(data):
             shuffled_col_values = col_values.copy()
             if col_to_permute == 0:
