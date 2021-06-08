@@ -1,6 +1,7 @@
 import numpy as np
 from itertools import cycle
 from numba import jit
+from functools import lru_cache
 from hierarch.internal_functions import (
     nb_reweighter,
     nb_reweighter_real,
@@ -453,12 +454,15 @@ class Permuter:
                 keys = np.append(keys, values[:, -3].shape[0])
             except IndexError:
                 keys = np.empty(0, dtype=np.int64)
+            keys = tuple(keys.tolist())
 
             if indexes.size == len(data):
-                self.transform = self._random_return(col_to_permute, keys)
+                self.transform = self._random_return(col_to_permute, (keys))
 
             else:
                 col_values = data[:, col_to_permute][indexes]
+                col_values = tuple(col_values.tolist())
+                counts = tuple(counts.tolist())
                 self.transform = self._random_repeat_return(
                     col_to_permute, col_values, keys, counts
                 )
@@ -505,18 +509,21 @@ class Permuter:
         return _rep_iter_return_impl
 
     @staticmethod
+    @lru_cache()
     def _random_return(col_to_permute, keys):
         """Transformer when exact is False and repetition is not required.
         """
 
         if col_to_permute == 0:
 
+            @jit(nopython=True)
             def _random_return_impl(data):
                 nb_fast_shuffle(data[:, col_to_permute])
                 return data
 
         else:
 
+            @jit(nopython=True)
             def _random_return_impl(data):
                 nb_strat_shuffle(data[:, col_to_permute], keys)
                 return data
@@ -524,12 +531,15 @@ class Permuter:
         return _random_return_impl
 
     @staticmethod
+    @lru_cache()
     def _random_repeat_return(col_to_permute, col_values, keys, counts):
         """Transformer when exact is False and repetition is required.
         """
-
+        col_values = np.array(col_values)
+        counts = np.array(counts)
         if col_to_permute == 0:
 
+            @jit(nopython=True)
             def _random_repeat_return_impl(data):
                 shuffled_col_values = col_values.copy()
                 nb_fast_shuffle(shuffled_col_values)
@@ -538,6 +548,7 @@ class Permuter:
 
         else:
 
+            @jit(nopython=True)
             def _random_repeat_return_impl(data):
                 shuffled_col_values = col_values.copy()
                 nb_strat_shuffle(shuffled_col_values, keys)
