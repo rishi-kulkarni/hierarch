@@ -453,11 +453,12 @@ class Permuter:
                 keys = nb_unique(values[:, :-2])[1]
                 keys = np.append(keys, values[:, -3].shape[0])
             except IndexError:
-                keys = np.empty(0, dtype=np.int64)
+                keys = np.zeros(1, dtype=np.int64)
+                keys = np.append(keys, values[:, -2].shape[0])
             keys = tuple(keys.tolist())
 
             if indexes.size == len(data):
-                self.transform = self._random_return(col_to_permute, (keys))
+                self.transform = self._random_return(col_to_permute, keys)
 
             else:
                 col_values = data[:, col_to_permute][indexes]
