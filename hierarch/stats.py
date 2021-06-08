@@ -4,16 +4,16 @@ import math
 from itertools import combinations
 import pandas as pd
 from hierarch.internal_functions import (
-    nb_data_grabber,
     GroupbyMean,
     _compute_interval,
     bivar_central_moment,
 )
 from hierarch.resampling import Bootstrapper, Permuter
 from warnings import warn, simplefilter
+from functools import lru_cache
 
 
-def preprocess_data(data):
+def _preprocess_data(data):
     """Performs label encoding without overwriting numerical variables.
 
     Parameters
@@ -129,7 +129,7 @@ def studentized_covariance(x, y):
 
 
 @jit(nopython=True, cache=True)
-def welch_statistic(data, col: int, treatment_labels):
+def welch_statistic(sample_a, sample_b):
     """Calculates Welch's t statistic.
 
     Takes a 2D data matrix, a column to classify data by, and the labels
@@ -153,27 +153,17 @@ def welch_statistic(data, col: int, treatment_labels):
     Examples
     --------
 
-    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
-    ...               [1, 2, 3, 4, 5, 10, 11, 12, 13, 14]])
-    >>> x.T
-    array([[ 0,  1],
-           [ 0,  2],
-           [ 0,  3],
-           [ 0,  4],
-           [ 0,  5],
-           [ 1, 10],
-           [ 1, 11],
-           [ 1, 12],
-           [ 1, 13],
-           [ 1, 14]])
-    >>> welch_statistic(x.T, 0, (0, 1))
+    >>> import scipy.stats as stats
+    >>> a = np.array([1, 2, 3, 4, 5])
+    >>> b = np.array([10, 11, 12, 13, 14])
+    >>> welch_statistic(a, b)
     -9.0
 
     This uses the same calculation as scipy's ttest function.
 
     >>> import scipy.stats as stats
-    >>> a = [1, 2, 3, 4, 5]
-    >>> b = [10, 11, 12, 13, 14]
+    >>> a = np.array([1, 2, 3, 4, 5])
+    >>> b = np.array([10, 11, 12, 13, 14])
     >>> stats.ttest_ind(a, b, equal_var=False)[0]
     -9.0
     
@@ -186,8 +176,7 @@ def welch_statistic(data, col: int, treatment_labels):
     https://doi.org/10.1016/S0167-7152(97)00043-6.
 
     """
-    # get our two samples from the data matrix
-    sample_a, sample_b = nb_data_grabber(data, col, treatment_labels)
+
     len_a, len_b = len(sample_a), len(sample_b)
 
     # mean difference
@@ -203,16 +192,54 @@ def welch_statistic(data, col: int, treatment_labels):
     return t
 
 
-TEST_STATISTICS = {
-    "means": welch_statistic,
-    "corr": studentized_covariance,
-}
+@lru_cache()
+def _test_stat_factory(treatment_col, compare):
+    """Prepares test statistic functions for use in hypothesis_test.
+
+    Parameters
+    ----------
+    treatment_col : 1D tuple
+        Treatment column in the design matrix. Needs to be a tuple
+        so lru_cache can work.
+    compare : {'means', 'corr'}
+        Specifies test statistic to return. 
+
+    Returns
+    -------
+    function
+        Functions that come out of _test_stat_factory take the treatment
+        column of a design matrix and the dependent variable column to compute
+        a test statistic.
+
+    """
+    if compare == "means":
+        treatment_labels = np.unique(treatment_col)
+        if treatment_labels.size != 2:
+            raise ValueError("Needs 2 samples.")
+
+        @jit(nopython=True)
+        def _welch_stat(X, y):
+            sample_a, sample_b = _grabber(X, y, treatment_labels)
+            return welch_statistic(sample_a, sample_b)
+
+        return _welch_stat
+
+    if compare == "corr":
+        return studentized_covariance
 
 
-def linear_regression_test(
+@jit(nopython=True)
+def _grabber(X, y, treatment_labels):
+    sample_a = y[X == treatment_labels[0]]
+    sample_b = y[X == treatment_labels[1]]
+    return sample_a, sample_b
+
+
+def hypothesis_test(
     data_array,
     treatment_col: int,
     compare="corr",
+    alternative="two-sided",
     skip=None,
     bootstraps=100,
     permutations=1000,
@@ -220,8 +247,8 @@ def linear_regression_test(
     return_null=False,
     random_state=None,
 ):
-    """Two-tailed hierarchical permutation test for any number of samples
-    with a hypothesized linear relationship.
+    """Two-tailed hierarchical permutation test for change in location
+    with any number of samples.
 
     Equivalent to calculating a p-value for a slope coefficient in a linear model.
 
@@ -284,15 +311,17 @@ def linear_regression_test(
     >>> print(data.shape)
     (24, 4)
 
-    >>> linear_regression_test(data, treatment_col=0,
+    >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
     0.013714285714285714
 
-    This test should give the same or a very similar p-value to two_sample_test 
-    for datasets with two treatment groups.
+    By setting compare to "means", this function will perform a permutation t-test.
+    "corr", which is based on a studentized covariance test statistic, should give the 
+    same or a very similar p-value to the permutation t-test for datasets with two 
+    treatment groups.
 
-    >>> two_sample_test(data, treatment_col=0,
+    >>> hypothesis_test(data, treatment_col=0, compare='means',
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
     0.013714285714285714
@@ -310,15 +339,17 @@ def linear_regression_test(
 
     There are 2,520 possible permutations, so choose a subset. 
 
-    >>> linear_regression_test(data, treatment_col=0,
+    >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00675
+    0.0067
 
 
     """
+
+    # turns the input array or dataframe into a float64 array
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
-        data = preprocess_data(data_array)
+        data = _preprocess_data(data_array)
     else:
         raise TypeError("Input data must be ndarray or DataFrame.")
 
@@ -350,15 +381,10 @@ def linear_regression_test(
 
     # fetch test statistic from dictionary or, if given a custom test statistic, make sure it is callable
     if isinstance(compare, str):
-        try:
-            teststat = TEST_STATISTICS[compare]
-        except KeyError:
-            print(
-                "Invalid comparison. Available comparisons are: "
-                + "".join(stat for stat in TEST_STATISTICS.keys())
-            )
-            raise
-    elif not callable(compare):
+        teststat = _test_stat_factory(tuple(data[:, treatment_col].tolist()), compare)
+    elif callable(compare):
+        teststat = compare
+    else:
         raise AttributeError("Custom test statistics must be callable.")
 
     # aggregate our data up to the treated level and determine the
@@ -431,266 +457,21 @@ def linear_regression_test(
                 teststat(permute_resample[:, treatment_col], permute_resample[:, -1])
             )
 
-    # two tailed test, so check where absolute values of the null distribution
-    # are greater or equal to the absolute value of the observed difference
-    pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
-        0
-    ].size / len(null_distribution)
+    # generate both one-tailed p-values, then two-tailed
+    p_less = np.where(truediff > np.array(null_distribution))[0].size / len(
+        null_distribution
+    )
+    p_greater = np.where(truediff < np.array(null_distribution))[0].size / len(
+        null_distribution
+    )
+    p_two = 2 * np.min((p_less, p_greater))
 
-    if pval == 0:
-        pval += 1 / (total)
-
-    if return_null is True:
-        return pval, null_distribution
-
-    else:
-        return pval
-
-
-def two_sample_test(
-    data_array,
-    treatment_col: int,
-    compare="means",
-    skip=None,
-    bootstraps=100,
-    permutations=1000,
-    kind="weights",
-    return_null=False,
-    random_state=None,
-):
-    """Two-tailed two-sample hierarchical permutation test.
-
-    Parameters
-    ----------
-    data_array : 2D numpy array or pandas DataFrame
-        Array-like containing both the independent and dependent variables to
-        be analyzed. It's assumed that the final (rightmost) column
-        contains the dependent variable values.
-    treatment_col : int
-        The index number of the column containing "two samples" to be compared.
-        Indexing starts at 0.
-    compare : str, optional
-        The test statistic to use to perform the hypothesis test. "means" automatically
-        calls the Welch t-statistic for a difference of means test, by default "means"
-    skip : list of ints, optional
-        Columns to skip in the bootstrap. Skip columns that were sampled
-        without replacement from the prior column, by default None
-    bootstraps : int, optional
-        Number of bootstraps to perform, by default 100. Can be set to 1 for a
-        permutation test without any bootstrapping.
-    permutations : int or "all", optional
-        Number of permutations to perform PER bootstrap sample. "all"
-        for exact test, by default 1000
-    kind : str, optional
-        Bootstrap algorithm - see Bootstrapper class, by default "weights"
-    return_null : bool, optional
-        Return the null distribution as well as the p value, by default False
-    seed : int or numpy random Generator, optional
-        Seedable for reproducibility., by default None
-
-    Returns
-    -------
-    float64
-        p-value for the hypothesis test
-
-    list
-        Empirical null distribution used to calculate the p-value
-
-    Raises
-    ------
-    TypeError
-        Raised if input data is not ndarray or DataFrame.
-    ValueError
-        Raised if treatment_col has more than two different labels in it.
-    KeyError
-        If comparison is a string, it must be in the TEST_STATISTICS dictionary.
-    AttributeError
-        If comparison is a custom statistic, it must be a function.
-
-    Examples
-    --------
-    Specify the parameters of a dataset with a difference of means of 2.
-
-    >>> from hierarch.power import DataSimulator
-    >>> import scipy.stats as stats
-    >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
-    >>> hierarchy = [2, 4, 3]
-    >>> datagen = DataSimulator(paramlist, random_state=123)
-    >>> datagen.fit(hierarchy)
-    >>> data = datagen.generate()
-    >>> print(data.shape)
-    (24, 4)
-
-    >>> two_sample_test(data, treatment_col=0,
-    ...                 bootstraps=1000, permutations='all',
-    ...                 random_state=1)
-    0.03402857142857143
-
-    Instead of an exact test, a number of random permutations can be specified.
-    In this case there are 70 possible permutations.
-    
-    >>> two_sample_test(data, treatment_col=0,
-    ...                 bootstraps=1000, permutations=70,
-    ...                 random_state=1)
-    0.03357142857142857
-
-    The treatment column does not have to be the outermost column.
-
-    >>> paramlist = [[stats.norm], [0, 1]*3, [stats.norm], [stats.norm]]
-    >>> hierarchy = [3, 2, 4, 3]
-    >>> datagen = DataSimulator(paramlist, random_state=123)
-    >>> datagen.fit(hierarchy)
-    >>> data = datagen.generate()
-    >>> print(data.shape)
-    (72, 5)
-
-    Because of the larger number of possible permutations, it is usually better
-    to reduce the number of bootstraps and increase the number of permutations.
-
-    >>> two_sample_test(data, treatment_col=0,
-    ...                 bootstraps=100, permutations=1000,
-    ...                 random_state=1)
-    Traceback (most recent call last):
-        ...
-    ValueError: Needs 2 samples.
-
-    Make sure that treatment_col is set to right column index.
-
-    >>> two_sample_test(data, treatment_col=1,
-    ...                 bootstraps=100, permutations=1000,
-    ...                 random_state=1)
-    0.00276
-    """
-
-    # turns the input array or dataframe into a float64 array
-    if isinstance(data_array, (np.ndarray, pd.DataFrame)):
-        data = preprocess_data(data_array)
-    else:
-        raise TypeError("Input data must be ndarray or DataFrame.")
-
-    # set random state
-    rng = np.random.default_rng(random_state)
-
-    # enforce lower bound on skip
-    if skip is not None:
-        skip = list(skip)
-        for v in reversed(skip):
-            if v <= treatment_col + 1:
-                warn("No need to include columns before treated columns in skip.")
-                skip.remove(v)
-    else:
-        skip = []
-
-    # enforce bounds on bootstraps and permutations
-    if not isinstance(bootstraps, int) or bootstraps < 1:
-        raise TypeError("bootstraps must be an integer greater than 0")
-    if isinstance(permutations, str):
-        if permutations != "all":
-            raise TypeError("permutations must be 'all' or an integer greater than 0")
-    elif not isinstance(permutations, int) or permutations < 1:
-        raise TypeError("permutations must be 'all' or an integer greater than 0")
-
-    # initialize and fit the bootstrapper to the data
-    bootstrapper = Bootstrapper(random_state=rng, kind=kind)
-    bootstrapper.fit(data, skip=skip)
-
-    # gather labels and raise an exception if there are more than two
-    try:
-        treatment_labels = np.unique(data[:, treatment_col])
-    except IndexError:
-        print("treatment_col must be an integer")
-        raise
-    if treatment_labels.size != 2:
-        raise ValueError("Needs 2 samples.")
-
-    # fetch test statistic from dictionary or, if given a custom test statistic, make sure it is callable
-    if isinstance(compare, str):
-        try:
-            teststat = TEST_STATISTICS[compare]
-        except KeyError:
-            print(
-                "Invalid comparison. Available comparisons are: "
-                + "".join(stat for stat in TEST_STATISTICS.keys())
-            )
-            raise
-    elif not callable(compare):
-        raise AttributeError("Custom test statistics must be callable.")
-
-    # aggregate our data up to the treated level and determine the
-    # observed test statistic
-    aggregator = GroupbyMean()
-    aggregator.fit(data)
-
-    # determine the number of groupby reductions need to be done
-    levels_to_agg = data.shape[1] - treatment_col - 3
-
-    # if levels_to_agg = 0, there are no bootstrap samples to
-    # generate.
-    if (levels_to_agg - len(skip)) == 0 and bootstraps > 1:
-        bootstraps = 1
-        simplefilter("always", UserWarning)
-        warn("No levels to bootstrap. Setting bootstraps to zero.")
-
-    test = data
-    test = aggregator.transform(test, iterations=levels_to_agg)
-    truediff = teststat(test, treatment_col, treatment_labels)
-
-    # initialize and fit the permuter to the aggregated data
-    # don't need to seed this, as numba's PRNG state is shared
-    permuter = Permuter()
-
-    if permutations == "all":
-        permuter.fit(test, treatment_col, exact=True)
-
-        # in the exact case, determine and set the total number of
-        # possible permutations
-        counts = np.unique(test[:, 0], return_counts=True)[1]
-        permutations = _binomial(counts.sum(), counts[0])
-
-    else:
-        # just fit the permuter if this is a randomized test
-        permuter.fit(test, treatment_col)
-
-    # skip the dot on the permute function
-    call_permute = permuter.transform
-
-    # initialize empty null distribution list
-    null_distribution = []
-    total = bootstraps * permutations
-
-    # first set of permutations is on the original data
-    # this helps to prevent getting a p-value of 0
-    for k in range(permutations):
-        permute_resample = call_permute(test)
-        null_distribution.append(
-            teststat(permute_resample, treatment_col, treatment_labels)
-        )
-
-    # already did one set of permutations
-    bootstraps -= 1
-
-    for j in range(bootstraps):
-        # generate a bootstrapped sample and aggregate it up to the
-        # treated level
-        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
-        bootstrapped_sample = aggregator.transform(
-            bootstrapped_sample, iterations=levels_to_agg
-        )
-
-        # generate permuted samples, calculate test statistic,
-        # append to null distribution
-
-        for k in range(permutations):
-            permute_resample = call_permute(bootstrapped_sample)
-            null_distribution.append(
-                teststat(permute_resample, treatment_col, treatment_labels)
-            )
-
-    # two tailed test, so check where absolute values of the null distribution
-    # are greater or equal to the absolute value of the observed difference
-    pval = np.where((np.array(np.abs(null_distribution)) >= np.abs(truediff)))[
-        0
-    ].size / len(null_distribution)
+    if alternative == "two-sided":
+        pval = p_two
+    elif alternative == "less":
+        pval = p_less
+    elif alternative == "greater":
+        pval = p_greater
 
     if pval == 0:
         pval += 1 / (total)
@@ -907,7 +688,7 @@ def multi_sample_test(
             (data[:, treatment_col] == output[i, 0]),
             (data[:, treatment_col] == output[i, 1]),
         )
-        output[i, 2] = two_sample_test(
+        output[i, 2] = hypothesis_test(
             data[test_idx],
             treatment_col=treatment_col,
             compare=compare,
@@ -1123,8 +904,8 @@ def confidence_interval(
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
 
-    >>> from hierarch.stats import linear_regression_test
-    >>> linear_regression_test(data, treatment_col=0,
+    >>> from hierarch.stats import hypothesis_test
+    >>> hypothesis_test(data, treatment_col=0, compare='corr',
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
     0.013714285714285714
@@ -1136,13 +917,13 @@ def confidence_interval(
     ...    bootstraps=1000, permutations='all', random_state=1)
     (-0.8244232537686278, 8.263889006560444)
 
-    hierarch.stats.two_sample_test can be used to generate the null distribution by
+    A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return a very similar interval.
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.3276550823430782, 6.111810670448726)
+    (1.3115460911999124, 6.127919661591889)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -1162,18 +943,11 @@ def confidence_interval(
 
     """
 
-    tests = {"means": two_sample_test, "corr": linear_regression_test}
-
     # turns the input array or dataframe into a float64 array
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
-        data = preprocess_data(data_array)
+        data = _preprocess_data(data_array)
     else:
         raise TypeError("Input data must be ndarray or DataFrame.")
-
-    try:
-        hypothesis_test = tests[compare]
-    except KeyError:
-        raise KeyError("No such comparison.")
 
     # first compute the null distribution against the null that the effect size is equal to the MLE
     null_imposed_data = data.copy()
@@ -1233,7 +1007,11 @@ def confidence_interval(
             if np.abs(interval - (1 - _) * 100) < tolerance:
                 break
         else:
-            warn(" ".join(["p:", str(_), "failed to converge"]), ConvergenceWarning)
+            warn(
+                " ".join(["p-value:", str(_), "failed to converge"]),
+                ConvergenceWarning,
+                stacklevel=2,
+            )
 
     return _compute_interval(
         np.array(null), null_agg, target_agg, treatment_col, interval
