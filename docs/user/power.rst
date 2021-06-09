@@ -95,7 +95,7 @@ a significant result, assuming a p-value cutoff of 0.05. ::
     loops = 100
     for i in range(loops):
         data = sim.generate()
-        pvalues.append(ha.stats.two_sample_test(data, 0, bootstraps=500, permutations=100))
+        pvalues.append(ha.stats.hypothesis_test(data, 0, bootstraps=500, permutations=100))
         
     print(np.less(pvalues, 0.05).sum() / loops) 
 
@@ -111,7 +111,7 @@ you determine the column 1 sample size that achieves at least 80% power. ::
     loops = 100
     for i in range(loops):
         data = sim.generate()
-        pvalues.append(ha.stats.two_sample_test(data, 0, bootstraps=500, permutations=100))
+        pvalues.append(ha.stats.hypothesis_test(data, 0, bootstraps=500, permutations=100))
         
     print(np.less(pvalues, 0.05).sum() / loops)
 
@@ -134,7 +134,7 @@ achieved with an experimental design that makes more column 2 measurements. ::
     loops = 100
     for i in range(loops):
         data = sim.generate()
-        pvalues.append(ha.stats.two_sample_test(data, 0, bootstraps=500, permutations=100))
+        pvalues.append(ha.stats.hypothesis_test(data, 0, bootstraps=500, permutations=100))
         
     print(np.less(pvalues, 0.05).sum() / loops)
 
@@ -154,7 +154,7 @@ only 30 column 2 samples. ::
     loops = 100
     for i in range(loops):
         data = sim.generate()
-        pvalues.append(ha.stats.two_sample_test(data, 0, bootstraps=500, permutations=100))
+        pvalues.append(ha.stats.hypothesis_test(data, 0, bootstraps=500, permutations=100))
         
     print(np.less(pvalues, 0.05).sum() / loops)
     
@@ -180,7 +180,7 @@ the error for an event that happens 5% probability is +/- 2%, but at
     loops = 1000
     for i in range(loops):
         data = sim.generate()
-        pvalues.append(ha.stats.two_sample_test(data, 0, bootstraps=500, permutations=100))
+        pvalues.append(ha.stats.hypothesis_test(data, 0, bootstraps=500, permutations=100))
         
     print(np.less(pvalues, 0.05).sum() / loops)
 

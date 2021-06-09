@@ -230,8 +230,9 @@ def _test_stat_factory(treatment_col, compare):
 
 @jit(nopython=True)
 def _grabber(X, y, treatment_labels):
-    sample_a = y[X == treatment_labels[0]]
-    sample_b = y[X == treatment_labels[1]]
+    slicer = X == treatment_labels[0]
+    sample_a = y[slicer]
+    sample_b = y[~slicer]
     return sample_a, sample_b
 
 
@@ -264,6 +265,8 @@ def hypothesis_test(
     compare : str, optional
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
+    alternative : {"two-sided", "less", "greater"}
+        The alternative hypothesis for the test, "two-sided" by default.
     skip : list of ints, optional
         Columns to skip in the bootstrap. Skip columns that were sampled
         without replacement from the prior column, by default None
@@ -713,9 +716,12 @@ def multi_sample_test(
         out[:, :-1] = output
         out[:, -1] = q_vals
         output = out
-        output = pd.DataFrame(output, columns=['Condition 1', 'Condition 2', 'p-value', 'Corrected p-value'])
+        output = pd.DataFrame(
+            output,
+            columns=["Condition 1", "Condition 2", "p-value", "Corrected p-value"],
+        )
     else:
-        output = pd.DataFrame(output, columns=['Condition 1', 'Condition 2', 'p-value'])
+        output = pd.DataFrame(output, columns=["Condition 1", "Condition 2", "p-value"])
 
     return output
 
@@ -905,7 +911,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.3158282800277328, 6.1236374727640746)
+    (1.314807450602109, 6.124658302189696)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -921,7 +927,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.1816044138439996, 7.621070166635812)
+    (-0.12320618535452432, 7.56267193814634)
 
     A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return the same or a very
@@ -930,7 +936,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.3158282800277328, 6.1236374727640746)
+    (1.314807450602109, 6.124658302189696)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -944,11 +950,13 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.7743600526042317, 1.5558502398469196)
+    (0.7712039924329259, 1.5597743222883649)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
     """
+
+    rng = np.random.default_rng(random_state)
 
     alpha = (100 - interval) / 200
 
@@ -982,18 +990,21 @@ def confidence_interval(
         permutations=permutations,
         kind=kind,
         return_null=True,
-        random_state=random_state,
+        random_state=rng,
     )
-
 
     target_agg = grouper.transform(data, iterations=levels_to_agg)
 
     # make a guess as to the lower and upper bounds of the confidence interval
-    
+
     null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
-    
-    current_lower = _compute_interval(np.array(null), null_agg, target_agg, treatment_col, alpha)
-    current_upper = _compute_interval(np.array(null), null_agg, target_agg, treatment_col, 1-alpha)    
+
+    current_lower = _compute_interval(
+        np.array(null), null_agg, target_agg, treatment_col, alpha
+    )
+    current_upper = _compute_interval(
+        np.array(null), null_agg, target_agg, treatment_col, 1 - alpha
+    )
 
     # refine the bounds via iterative hypothesis testing
     # each bound needs to be found separately
@@ -1007,10 +1018,10 @@ def confidence_interval(
 
     for i in range(iterations):
 
-
-
         bound_imposed_data = data.copy()
-        bound_imposed_data[:, -1] -= current_lower * bound_imposed_data[:, treatment_col]
+        bound_imposed_data[:, -1] -= (
+            current_lower * bound_imposed_data[:, treatment_col]
+        )
         current_p, null = hypothesis_test(
             bound_imposed_data,
             treatment_col,
@@ -1021,15 +1032,17 @@ def confidence_interval(
             permutations=permutations,
             kind=kind,
             return_null=True,
-            random_state=random_state,
+            random_state=rng,
         )
 
-        if np.abs(100*(alpha - current_p)) < tolerance:
+        if np.abs(100 * (alpha - current_p)) < tolerance:
             break
 
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
-        current_lower = _compute_interval(np.array(null), bound_agg, target_agg, treatment_col, alpha)
+        current_lower = _compute_interval(
+            np.array(null), bound_agg, target_agg, treatment_col, alpha
+        )
 
     else:
         warn(
@@ -1038,12 +1051,12 @@ def confidence_interval(
             stacklevel=2,
         )
 
-
-
     for i in range(iterations):
 
         bound_imposed_data = data.copy()
-        bound_imposed_data[:, -1] -= current_upper * bound_imposed_data[:, treatment_col]
+        bound_imposed_data[:, -1] -= (
+            current_upper * bound_imposed_data[:, treatment_col]
+        )
         current_p, null = hypothesis_test(
             bound_imposed_data,
             treatment_col,
@@ -1054,15 +1067,16 @@ def confidence_interval(
             permutations=permutations,
             kind=kind,
             return_null=True,
-            random_state=random_state,
+            random_state=rng,
         )
 
-        if np.abs(100*(alpha - current_p)) < tolerance:
+        if np.abs(100 * (alpha - current_p)) < tolerance:
             break
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
-        current_upper = _compute_interval(np.array(null), bound_agg, target_agg, treatment_col, 1-alpha)
-
+        current_upper = _compute_interval(
+            np.array(null), bound_agg, target_agg, treatment_col, 1 - alpha
+        )
 
     else:
         warn(
@@ -1081,6 +1095,7 @@ class ConvergenceWarning(Warning):
     def __str__(self):
         return repr(self.message)
 
+
 @jit(nopython=True, cache=True)
 def _compute_interval(null, null_data, target_data, treatment_col, alpha):
 
@@ -1096,6 +1111,7 @@ def _compute_interval(null, null_data, target_data, treatment_col, alpha):
 
     bound = bound + (bivar_central_moment(x, y) / bivar_central_moment(x, x))
     return bound
+
 
 @jit(nopython=True, cache=True)
 def _cov_std_error(x, y):

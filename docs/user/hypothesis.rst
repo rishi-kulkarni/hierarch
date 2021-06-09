@@ -68,13 +68,13 @@ correct order. ::
 
     data[columns]
 
-Next, you can call two_sample_test from hierarch's stats module, which will 
+Next, you can call hypothesis_test from hierarch's stats module, which will 
 calculate the p-value. You have to specify what column is the treatment 
 column - in this case, "Condition." Indexing starts at 0, so you input 
 treatment_col=0. In this case, there are only 6c3 = 20 ways to permute the 
 treatment labels, so you should specify "all" permutations be used. ::
 
-    p_val = ha.stats.two_sample_test(data, treatment_col=0, 
+    p_val = ha.stats.hypothesis_test(data, treatment_col=0, compare='means',
                                      bootstraps=500, permutations='all', 
                                      random_state=1)
 
@@ -82,9 +82,9 @@ treatment labels, so you should specify "all" permutations be used. ::
 
     #out: p-value = 0.0406
 
-There are a number of parameters that can be used to modify two_sample_test. ::
+There are a number of parameters that can be used to modify hypothesis_test. ::
 
-    ha.stats.two_sample_test(data_array, 
+    ha.stats.hypothesis_test(data_array, 
                             treatment_col, 
                             compare="means", 
                             skip=None, 
@@ -94,11 +94,19 @@ There are a number of parameters that can be used to modify two_sample_test. ::
                             return_null=False,
                             random_state=None)
 
-**compare**: The default "means" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. For flexibility, two_sample_test can take a test statistic function as an argument. 
+**compare**: The default "means" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. 
+"corr" uses a studentized covariance based test statistic which gives the same result as the Welch t-statistic for two-sample
+datasets, but can be used on datasets with any number of related treatment groups. For flexibility, hypothesis_test can 
+also take a test statistic function as an argument. 
 
 **skip**: indicates the indices of columns that should be skipped in the bootstrapping procedure. 
 
-A simple rule of thumb is that columns should be resampled with replacement only if they were originally sampled with replacement (or effectively sampled with replacement). For example, consider an imaging experiment in which you image several fields of view in a well, which each contain several cells. While you can consider the cells sampled with replacement from the well (there are so many more cells in the population that this assumption is fair), the cells are not sampled with replacement from the field of view (as you are measuring ALL cells in each field of view). The 10% condition is a reasonable rule of thumb here - if your sample represents less than 10% of the population, you can treat it as sampled with replacement.
+A simple rule of thumb is that columns should be resampled with replacement only if they were originally sampled with replacement 
+(or effectively sampled with replacement). For example, consider an imaging experiment in which you image several fields of view in a well, 
+which each contain several cells. While you can consider the cells sampled with replacement from the well (there are so many more cells in the 
+population that this assumption is fair), the cells are not sampled with replacement from the field of view (as you are measuring ALL cells 
+in each field of view). The 10% condition is a reasonable rule of thumb here - if your sample represents less than 10% of the population, 
+you can treat it as sampled with replacement.
 
 **bootstraps**: indicates the number of bootstrapped samples to be drawn from data_array. 
 
@@ -264,14 +272,14 @@ Many-Sample Hypothesis Tests - Single Hypothesis
 One-way ANOVA and similar tests (like multi_sample_test) are inappropriate when
 you have several samples meant to test a single hypothesis. For example, perhaps
 you have several samples with different concentrations of the same drug treatment.
-In this case, hierarch provides linear_regression_test, which is equivalent to
+In this case, you can set compare to "corr", which is equivalent to
 performing a hypothesis test on a linear model against the null hypothesis that
 the slope coefficient is equal to 0.
 
 This hypothesis test uses a studentized covariance test statistic - essentially,
 the sample covariance divided by the standard error of the sample covariance. This
 test statistic is approximately normally distributed and in the two-sample case, 
-this test gives the same result as two_sample_test.
+this test gives the same result as setting compare="means".
 
 First, consider a dataset with two treatment groups, four samples each, and three
 measurements on each sample. ::
@@ -339,20 +347,20 @@ measurements on each sample. ::
 | 2 | 4 | 3 | 2.902522 |
 +---+---+---+----------+
 
-Performing linear_regression_test and two_sample_test on this dataset should
+Using studentized covariance or the Welch t statistic on this dataset should
 give very similar p-values. ::
 
-    linear_regression_test(data, treatment_col=0,
+    hypothesis_test(data, treatment_col=0, compare="corr",
                         bootstraps=1000, permutations='all',
                         random_state=1)
     0.013714285714285714
 
-    two_sample_test(data, treatment_col=0,
+    hypothesis_test(data, treatment_col=0, compare="means",
                     bootstraps=1000, permutations='all',
                     random_state=1)
     0.013714285714285714
 
-However, unlike two_sample_test, this test can handle any number of conditions. Consider instead
+However, unlike the Welch t-statistic, studentized covariance can handle any number of conditions. Consider instead
 a dataset with four treatment conditions that have a linear relationship. ::
 
     paramlist = [[0, 2/3, 4/3, 2], [stats.norm], [stats.norm]]
@@ -417,7 +425,7 @@ a dataset with four treatment conditions that have a linear relationship. ::
 For this dataset, there are 8! / (2!^4) = 2,520 total permutations. We will choose a random
 subset of them to compute the p-value. ::
 
-    linear_regression_test(data, treatment_col=0,
+    hypothesis_test(data, treatment_col=0,
                         bootstraps=100, permutations=1000,
                         random_state=1)
     0.00767

@@ -81,7 +81,7 @@ This interval does not cross 0, so it is consistent with significance at the alp
 level.
 
 Because ha.stats.confidence_interval is based on a hypothesis test, it requires
-the same input parameters as two_sample_test or linear_regression_test. However, 
+the same input parameters as hypothesis_test. However, 
 the new **interval** parameter determines the width of the interval. ::
 
     ha.stats.confidence_interval(
