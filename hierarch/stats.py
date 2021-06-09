@@ -5,7 +5,6 @@ from itertools import combinations
 import pandas as pd
 from hierarch.internal_functions import (
     GroupbyMean,
-    _compute_interval,
     bivar_central_moment,
 )
 from hierarch.resampling import Bootstrapper, Permuter
