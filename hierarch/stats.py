@@ -609,12 +609,13 @@ def multi_sample_test(
     >>> multi_sample_test(data, treatment_col=0, hypotheses="all",
     ...                   correction=None, bootstraps=1000,
     ...                   permutations="all", random_state=111)
-    array([[2.0, 3.0, 0.0354],
-           [1.0, 3.0, 0.0393],
-           [3.0, 4.0, 0.0406],
-           [2.0, 4.0, 0.1476],
-           [1.0, 2.0, 0.4021],
-           [1.0, 4.0, 0.4558]], dtype=object)
+      Condition 1 Condition 2 p-value
+    0         2.0         3.0  0.0354
+    1         1.0         3.0  0.0393
+    2         3.0         4.0  0.0406
+    3         2.0         4.0  0.1476
+    4         1.0         2.0  0.4021
+    5         1.0         4.0  0.4558
 
     Multiple comparison correction to control False Discovery Rate is advisable in
     this situation. The final column now shows the q-values, or "adjusted" p-values
@@ -623,13 +624,14 @@ def multi_sample_test(
     >>> multi_sample_test(data, treatment_col=0, hypotheses="all",
     ...                   correction='fdr', bootstraps=1000,
     ...                   permutations="all", random_state=111)
-    array([[2.0, 3.0, 0.0354, 0.0812],
-           [1.0, 3.0, 0.0393, 0.0812],
-           [3.0, 4.0, 0.0406, 0.0812],
-           [2.0, 4.0, 0.1476, 0.2214],
-           [1.0, 2.0, 0.4021, 0.4558],
-           [1.0, 4.0, 0.4558, 0.4558]], dtype=object)
-
+      Condition 1 Condition 2 p-value Corrected p-value
+    0         2.0         3.0  0.0354            0.0812
+    1         1.0         3.0  0.0393            0.0812
+    2         3.0         4.0  0.0406            0.0812
+    3         2.0         4.0  0.1476            0.2214
+    4         1.0         2.0  0.4021            0.4558
+    5         1.0         4.0  0.4558            0.4558
+    
     Perhaps the experimenter is not interested in every pairwise comparison - perhaps
     condition 2 is a control that all other conditions are meant to be compared to.
     The comparisons of interest can be specified using a list.
@@ -638,9 +640,10 @@ def multi_sample_test(
     >>> multi_sample_test(data, treatment_col=0, hypotheses=tests,
     ...                   correction='fdr', bootstraps=1000,
     ...                   permutations="all", random_state=222)
-    array([[2.0, 3.0, 0.0359, 0.1077],
-           [2.0, 4.0, 0.1505, 0.22575],
-           [2.0, 1.0, 0.4035, 0.4035]], dtype=object)
+      Condition 1 Condition 2 p-value Corrected p-value
+    0         2.0         3.0  0.0359            0.1077
+    1         2.0         4.0  0.1505           0.22575
+    2         2.0         1.0  0.4035            0.4035
 
 
     """
@@ -710,6 +713,9 @@ def multi_sample_test(
         out[:, :-1] = output
         out[:, -1] = q_vals
         output = out
+        output = pd.DataFrame(output, columns=['Condition 1', 'Condition 2', 'p-value', 'Corrected p-value'])
+    else:
+        output = pd.DataFrame(output, columns=['Condition 1', 'Condition 2', 'p-value'])
 
     return output
 
@@ -899,7 +905,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.3115460911999124, 6.127919661591889)
+    (1.3158282800277328, 6.1236374727640746)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -915,15 +921,16 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.8244232537686278, 8.263889006560444)
+    (-0.1816044138439996, 7.621070166635812)
 
     A permutation t-test can be used to generate the null distribution by
-    specifying compare = "means". This should return a very similar interval.
+    specifying compare = "means". This should return the same or a very
+    similar interval.
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.3115460911999124, 6.127919661591889)
+    (1.3158282800277328, 6.1236374727640746)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -937,11 +944,13 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.75098670099828, 1.6445035110667694)
+    (0.7743600526042317, 1.5558502398469196)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
     """
+
+    alpha = (100 - interval) / 200
 
     # turns the input array or dataframe into a float64 array
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
@@ -976,46 +985,93 @@ def confidence_interval(
         random_state=random_state,
     )
 
+
     target_agg = grouper.transform(data, iterations=levels_to_agg)
 
-    # the null distribution has a tendency to underestimate the "true" null's variance
-    # by recomputing it a few times, we get the correct coverage
+    # make a guess as to the lower and upper bounds of the confidence interval
+    
+    null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
+    
+    current_lower = _compute_interval(np.array(null), null_agg, target_agg, treatment_col, alpha)
+    current_upper = _compute_interval(np.array(null), null_agg, target_agg, treatment_col, 1-alpha)    
 
-    if np.abs(interval - (1 - _) * 100) >= tolerance:
+    # refine the bounds via iterative hypothesis testing
+    # each bound needs to be found separately
 
-        for i in range(iterations - 1):
+    # find lower bound
 
-            null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
+    if compare == "means":
+        alternative_lower, alternative_upper = "less", "greater"
+    else:
+        alternative_lower, alternative_upper = "greater", "less"
 
-            lower, upper = _compute_interval(
-                np.array(null), null_agg, target_agg, treatment_col, interval
-            )
+    for i in range(iterations):
 
-            null_imposed_data = data.copy()
-            null_imposed_data[:, -1] -= lower * null_imposed_data[:, treatment_col]
-            _, null = hypothesis_test(
-                null_imposed_data,
-                treatment_col,
-                skip=skip,
-                bootstraps=bootstraps,
-                permutations=permutations,
-                kind=kind,
-                return_null=True,
-                random_state=random_state,
-            )
 
-            if np.abs(interval - (1 - _) * 100) < tolerance:
-                break
-        else:
-            warn(
-                " ".join(["p-value:", str(_), "failed to converge"]),
-                ConvergenceWarning,
-                stacklevel=2,
-            )
 
-    return _compute_interval(
-        np.array(null), null_agg, target_agg, treatment_col, interval
-    )
+        bound_imposed_data = data.copy()
+        bound_imposed_data[:, -1] -= current_lower * bound_imposed_data[:, treatment_col]
+        current_p, null = hypothesis_test(
+            bound_imposed_data,
+            treatment_col,
+            compare=compare,
+            alternative=alternative_lower,
+            skip=skip,
+            bootstraps=bootstraps,
+            permutations=permutations,
+            kind=kind,
+            return_null=True,
+            random_state=random_state,
+        )
+
+        if np.abs(100*(alpha - current_p)) < tolerance:
+            break
+
+        bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
+
+        current_lower = _compute_interval(np.array(null), bound_agg, target_agg, treatment_col, alpha)
+
+    else:
+        warn(
+            " ".join(["lower tail:", str(current_p), "failed to converge"]),
+            ConvergenceWarning,
+            stacklevel=2,
+        )
+
+
+
+    for i in range(iterations):
+
+        bound_imposed_data = data.copy()
+        bound_imposed_data[:, -1] -= current_upper * bound_imposed_data[:, treatment_col]
+        current_p, null = hypothesis_test(
+            bound_imposed_data,
+            treatment_col,
+            compare=compare,
+            alternative=alternative_upper,
+            skip=skip,
+            bootstraps=bootstraps,
+            permutations=permutations,
+            kind=kind,
+            return_null=True,
+            random_state=random_state,
+        )
+
+        if np.abs(100*(alpha - current_p)) < tolerance:
+            break
+        bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
+
+        current_upper = _compute_interval(np.array(null), bound_agg, target_agg, treatment_col, 1-alpha)
+
+
+    else:
+        warn(
+            " ".join(["upper tail:", str(current_p), "failed to converge"]),
+            ConvergenceWarning,
+            stacklevel=2,
+        )
+
+    return current_lower, current_upper
 
 
 class ConvergenceWarning(Warning):
@@ -1024,3 +1080,38 @@ class ConvergenceWarning(Warning):
 
     def __str__(self):
         return repr(self.message)
+
+@jit(nopython=True, cache=True)
+def _compute_interval(null, null_data, target_data, treatment_col, alpha):
+
+    x = null_data[:, treatment_col]
+    y = null_data[:, -1]
+
+    denom = _cov_std_error(x, y)
+    bound = np.quantile(null, alpha) * denom / bivar_central_moment(x, x)
+
+    x = target_data[:, treatment_col]
+    y = target_data[:, -1]
+    denom = _cov_std_error(x, y)
+
+    bound = bound + (bivar_central_moment(x, y) / bivar_central_moment(x, x))
+    return bound
+
+@jit(nopython=True, cache=True)
+def _cov_std_error(x, y):
+    n = len(x)
+    # first term is the second symmetric bivariate central moment. an approximate
+    # bias correction of n - root(2) is applied
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2 ** 0.5)
+
+    # second term is the product of the standard deviations of x and y over n - 1.
+    # this term rapidly goes to 0 as n goes to infinity
+    denom_2 = (
+        bivar_central_moment(x, x, pow=1, ddof=1)
+        * bivar_central_moment(y, y, pow=1, ddof=1)
+    ) / (n - 1)
+
+    # third term is the square of the covariance of x and y. an approximate bias
+    # correction of n - root(3) is applied
+    denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
+    return ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
