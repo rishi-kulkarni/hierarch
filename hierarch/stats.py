@@ -460,10 +460,10 @@ def hypothesis_test(
             )
 
     # generate both one-tailed p-values, then two-tailed
-    p_less = np.where(truediff > np.array(null_distribution))[0].size / len(
+    p_less = np.where(truediff >= np.array(null_distribution))[0].size / len(
         null_distribution
     )
-    p_greater = np.where(truediff < np.array(null_distribution))[0].size / len(
+    p_greater = np.where(truediff <= np.array(null_distribution))[0].size / len(
         null_distribution
     )
     p_two = 2 * np.min((p_less, p_greater))
@@ -1088,6 +1088,11 @@ def confidence_interval(
 
 
 class ConvergenceWarning(Warning):
+    """Arises when iterative search for confidence intervals fails.
+
+    Can typically be solved by upping the number of permutations or search iterations.
+    """
+
     def __init__(self, message):
         self.message = message
 
