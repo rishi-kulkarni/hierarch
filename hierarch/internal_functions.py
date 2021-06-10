@@ -157,6 +157,23 @@ def _repeat(target, counts):
 
 @nb.jit(nopython=True, inline="always")
 def bounded_uint(ub):
+    """Produces an unbiased random integer within the half-open set of 0 to ub.
+
+    Based on Daniel Lemire's implementation.
+
+    Notes
+    -----
+    https://lemire.me/blog/2019/06/06/nearly-divisionless-random-integer-generation-on-various-systems/
+
+    Parameters
+    ----------
+    ub : int
+        The upper bound plus one.
+
+    Returns
+    -------
+    int
+    """    
     x = np.random.randint(low=2 ** 32)
     m = ub * x
     l = np.uint32(m)
@@ -175,6 +192,8 @@ def bounded_uint(ub):
 
 @nb.jit(nopython=True, cache=True)
 def nb_fast_shuffle(arr):
+    """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers.
+    """    
     i = arr.shape[0] - 1
     while i > 0:
         j = bounded_uint(i + 1)
@@ -184,6 +203,15 @@ def nb_fast_shuffle(arr):
 
 @nb.jit(nopython=True, cache=True)
 def nb_strat_shuffle(arr, stratification):
+    """Stratified Fisher-Yates shuffle.
+
+    Parameters
+    ----------
+    arr : 1D array-like
+        Target array.
+    stratification : 1D array-like
+        Ranges to shuffle within. Must be sorted.
+    """    
     for v, w in zip(stratification[:-1], stratification[1:]):
         i = w - v - 1
         while i > 0:

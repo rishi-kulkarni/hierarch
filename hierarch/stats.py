@@ -223,8 +223,11 @@ def _test_stat_factory(treatment_col, compare):
 
         return _welch_stat
 
-    if compare == "corr":
+    elif compare == "corr":
         return studentized_covariance
+
+    else:
+        raise KeyError("No such comparison.")
 
 
 @jit(nopython=True)
