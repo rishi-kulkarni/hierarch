@@ -283,7 +283,7 @@ def hypothesis_test(
     return_null : bool, optional
         Return the null distribution as well as the p value, by default False
     random_state : int or numpy random Generator, optional
-        Seedable for reproducibility., by default None
+        Seedable for reproducibility, by default None
 
     Returns
     -------
@@ -319,7 +319,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
-    0.013685714285714285
+    0.013714285714285714
 
     By setting compare to "means", this function will perform a permutation t-test.
     "corr", which is based on a studentized covariance test statistic, should give the 
@@ -329,7 +329,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0, compare='means',
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
-    0.013685714285714285
+    0.013714285714285714
 
     This test can handle data with multiple treatment groups that have a 
     hypothesized linear relationship.
@@ -347,7 +347,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00668
+    0.0067
 
 
     """
@@ -615,12 +615,12 @@ def multi_sample_test(
     ...                   correction=None, bootstraps=1000,
     ...                   permutations="all", random_state=111)
       Condition 1 Condition 2 p-value
-    0         2.0         3.0  0.0354
-    1         1.0         3.0  0.0393
-    2         3.0         4.0  0.0406
-    3         2.0         4.0  0.1476
-    4         1.0         2.0  0.4021
-    5         1.0         4.0  0.4558
+    0         2.0         3.0  0.0355
+    1         1.0         3.0  0.0394
+    2         3.0         4.0  0.0407
+    3         2.0         4.0  0.1477
+    4         1.0         2.0  0.4022
+    5         1.0         4.0  0.4559
 
     Multiple comparison correction to control False Discovery Rate is advisable in
     this situation. The final column now shows the q-values, or "adjusted" p-values
@@ -630,12 +630,12 @@ def multi_sample_test(
     ...                   correction='fdr', bootstraps=1000,
     ...                   permutations="all", random_state=111)
       Condition 1 Condition 2 p-value Corrected p-value
-    0         2.0         3.0  0.0354            0.0812
-    1         1.0         3.0  0.0393            0.0812
-    2         3.0         4.0  0.0406            0.0812
-    3         2.0         4.0  0.1476            0.2214
-    4         1.0         2.0  0.4021            0.4558
-    5         1.0         4.0  0.4558            0.4558
+    0         2.0         3.0  0.0355            0.0814
+    1         1.0         3.0  0.0394            0.0814
+    2         3.0         4.0  0.0407            0.0814
+    3         2.0         4.0  0.1477           0.22155
+    4         1.0         2.0  0.4022            0.4559
+    5         1.0         4.0  0.4559            0.4559
     
     Perhaps the experimenter is not interested in every pairwise comparison - perhaps
     condition 2 is a control that all other conditions are meant to be compared to.
@@ -646,9 +646,9 @@ def multi_sample_test(
     ...                   correction='fdr', bootstraps=1000,
     ...                   permutations="all", random_state=222)
       Condition 1 Condition 2 p-value Corrected p-value
-    0         2.0         3.0  0.0359            0.1077
-    1         2.0         4.0  0.1505           0.22575
-    2         2.0         1.0  0.4035            0.4035
+    0         2.0         3.0   0.036             0.108
+    1         2.0         4.0  0.1506            0.2259
+    2         2.0         1.0  0.4036            0.4036
 
 
     """
@@ -922,7 +922,7 @@ def confidence_interval(
     >>> hypothesis_test(data, treatment_col=0, compare='corr',
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
-    0.013685714285714285
+    0.013714285714285714
 
     This suggests that while the 95% confidence interval does not contain 0, the 99.5%
     confidence interval should.
