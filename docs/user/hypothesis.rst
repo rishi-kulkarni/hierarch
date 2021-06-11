@@ -74,7 +74,9 @@ column - in this case, "Condition." Indexing starts at 0, so you input
 treatment_col=0. In this case, there are only 6c3 = 20 ways to permute the 
 treatment labels, so you should specify "all" permutations be used. ::
 
-    p_val = ha.stats.hypothesis_test(data, treatment_col=0, compare='means',
+    from hierarch.stats import hypothesis_test
+
+    p_val = hypothesis_test(data, treatment_col=0, compare='means',
                                      bootstraps=500, permutations='all', 
                                      random_state=1)
 
@@ -84,20 +86,23 @@ treatment labels, so you should specify "all" permutations be used. ::
 
 There are a number of parameters that can be used to modify hypothesis_test. ::
 
-    ha.stats.hypothesis_test(data_array, 
-                            treatment_col, 
-                            compare="means", 
-                            skip=None, 
-                            bootstraps=100, 
-                            permutations=1000, 
-                            kind='weights', 
-                            return_null=False,
-                            random_state=None)
+    hypothesis_test(data_array, 
+                    treatment_col, 
+                    compare="means", 
+                    skip=None, 
+                    bootstraps=100, 
+                    permutations=1000, 
+                    kind='weights', 
+                    return_null=False,
+                    random_state=None)
 
 **compare**: The default "means" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. 
 "corr" uses a studentized covariance based test statistic which gives the same result as the Welch t-statistic for two-sample
 datasets, but can be used on datasets with any number of related treatment groups. For flexibility, hypothesis_test can 
-also take a test statistic function as an argument. 
+also take a test statistic function as an argument.
+
+**alternative** : "two-sided" or "less" or "greater" specifies the alternative hypothesis. "two-sided" conducts
+a two-tailed test, while "less" or "greater" conduct the appropriate one-tailed test.
 
 **skip**: indicates the indices of columns that should be skipped in the bootstrapping procedure. 
 
@@ -227,6 +232,8 @@ This dataset has been generated such that treatments 1 and 4 have the same mean,
 treatment 2 represents a slight difference and treatment 4 represents a large difference.
 There are six total comparisons that can be made, which can be performed automatically
 using multi_sample_test as follows. ::
+
+    from hierarch.stats import multi_sample_test
 
     multi_sample_test(data, treatment_col=0, hypotheses="all",
                     correction=None, bootstraps=1000,

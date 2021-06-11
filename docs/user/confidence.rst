@@ -65,7 +65,7 @@ confidence interval. ::
 
     from hierarch.stats import confidence_interval
 
-    ha.stats.confidence_interval(
+    confidence_interval(
     data,
     treatment_col=0,
     compare='means',
@@ -84,7 +84,7 @@ Because ha.stats.confidence_interval is based on a hypothesis test, it requires
 the same input parameters as hypothesis_test. However, 
 the new **interval** parameter determines the width of the interval. ::
 
-    ha.stats.confidence_interval(
+    confidence_interval(
     data,
     treatment_col=0,
     compare='means',
@@ -96,7 +96,7 @@ the new **interval** parameter determines the width of the interval. ::
 
     (-0.9086402840632387, 0.25123067872990457)
 
-    ha.stats.confidence_interval(
+    confidence_interval(
     data,
     treatment_col=0,
     compare='means',
@@ -141,7 +141,8 @@ this value. You can test this with the following code. ::
 
     for i in range(loops):
         data = sim.generate()
-        lower, upper = ha.stats.confidence_interval(data, 0, interval=95, bootstraps=100, permutations='all')
+        lower, upper = confidence_interval(data, 0, interval=95, 
+                                           bootstraps=100, permutations='all')
         if lower <= true_difference <= upper:
             coverage += 1
 
@@ -223,7 +224,7 @@ for **compare** when computing a confidence interval. ::
 
     from hierarch.stats import confidence_interval
 
-    ha.stats.confidence_interval(
+    confidence_interval(
     data,
     treatment_col=0,
     compare='corr',
@@ -260,7 +261,8 @@ set up a simulation as above to check the coverage of the 95% confidence interva
 
     for i in range(loops):
         data = datagen.generate()
-        lower, upper = ha.stats.confidence_interval(data, 0, interval=95, bootstraps=100, permutations='all')
+        lower, upper = confidence_interval(data, 0, interval=95, 
+                                           bootstraps=100, permutations='all')
         if lower <= true_difference <= upper:
             coverage += 1
 
@@ -279,7 +281,8 @@ interest. ::
 
     for i in range(loops):
         data = datagen.generate()
-        lower, upper = ha.stats.confidence_interval(data, 0, interval=99, bootstraps=100, permutations='all')
+        lower, upper = confidence_interval(data, 0, interval=99, 
+                                           bootstraps=100, permutations='all')
         if lower <= true_difference <= upper:
             coverage += 1
 

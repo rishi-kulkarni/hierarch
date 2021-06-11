@@ -51,5 +51,7 @@ Here is the sort of data that hierarch is designed to perform hypothesis tests o
 
 The code to perform a hierarchical permutation t-test on this dataset looks like::
 
-    hierarch.stats.hypothesis_test(data, treatment_col=0,
-                                   bootstraps=1000, permutations='all')
+    from hierarch.stats import hypothesis_test
+
+    hypothesis_test(data, treatment_col=0,
+                    bootstraps=1000, permutations='all')
