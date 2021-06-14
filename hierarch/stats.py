@@ -1014,16 +1014,16 @@ def confidence_interval(
     # find lower bound
 
     if compare == "means":
-        alternative_lower, alternative_upper = "less", "greater"
-    else:
         alternative_lower, alternative_upper = "greater", "less"
+    else:
+        alternative_lower, alternative_upper = "less", "greater"
 
     for i in range(iterations):
 
-        bound_imposed_data = data.copy()
-        bound_imposed_data[:, -1] -= (
-            current_lower * bound_imposed_data[:, treatment_col]
-        )
+        bound_imposed_data = null_imposed_data.copy()
+        bound_imposed_data[:, -1] -= (start_slope - current_lower) * bound_imposed_data[
+            :, treatment_col
+        ]
         current_p, null = hypothesis_test(
             bound_imposed_data,
             treatment_col,
@@ -1055,10 +1055,10 @@ def confidence_interval(
 
     for i in range(iterations):
 
-        bound_imposed_data = data.copy()
-        bound_imposed_data[:, -1] -= (
-            current_upper * bound_imposed_data[:, treatment_col]
-        )
+        bound_imposed_data = null_imposed_data.copy()
+        bound_imposed_data[:, -1] += (current_upper - start_slope) * bound_imposed_data[
+            :, treatment_col
+        ]
         current_p, null = hypothesis_test(
             bound_imposed_data,
             treatment_col,
