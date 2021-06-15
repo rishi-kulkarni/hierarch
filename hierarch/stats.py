@@ -1001,11 +1001,13 @@ def confidence_interval(
 
     null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
 
-    current_lower = _compute_interval(
-        np.array(null), null_agg, target_agg, treatment_col, alpha
+    current_lower = (
+        _compute_interval(np.array(null), null_agg, null_agg, treatment_col, alpha)
+        + start_slope
     )
-    current_upper = _compute_interval(
-        np.array(null), null_agg, target_agg, treatment_col, 1 - alpha
+    current_upper = (
+        _compute_interval(np.array(null), null_agg, null_agg, treatment_col, 1 - alpha)
+        + start_slope
     )
 
     # refine the bounds via iterative hypothesis testing
