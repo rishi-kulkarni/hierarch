@@ -913,7 +913,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.314807450602109, 6.124658302189696)
+    (1.31480745060211, 6.1246583021896965)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -929,7 +929,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.12320618535452432, 7.56267193814634)
+    (-0.12320618535452343, 7.562671938146341)
 
     A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return the same or a very
@@ -938,7 +938,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.314807450602109, 6.124658302189696)
+    (1.31480745060211, 6.1246583021896965)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -952,7 +952,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.7712039924329259, 1.5597743222883649)
+    (0.8317584051133193, 1.6192897830814992)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -1116,7 +1116,6 @@ def _compute_interval(null, null_data, target_data, treatment_col, alpha):
 
     x = target_data[:, treatment_col]
     y = target_data[:, -1]
-    denom = _cov_std_error(x, y)
 
     bound = bound + (bivar_central_moment(x, y) / bivar_central_moment(x, x))
     return bound
@@ -1124,6 +1123,37 @@ def _compute_interval(null, null_data, target_data, treatment_col, alpha):
 
 @jit(nopython=True, cache=True)
 def _cov_std_error(x, y):
+    """Computes an estimate of the standard error of the covariance between
+    two variables.
+
+    Parameters
+    ----------
+    x, y : 1D numeric arrays
+
+    Returns
+    -------
+    float
+
+    Examples
+    --------
+    >>> x = np.arange(10)
+    >>> y = np.arange(10)
+    >>> _cov_std_error(x, y)
+    2.683675672629574
+
+    More data with an identical relationship causes the standard error to decrease.
+
+    >>> x = np.arange(10).repeat(5)
+    >>> y = np.arange(10).repeat(5)
+    >>> _cov_std_error(x, y)
+    1.0574158590055294
+
+    >>> x = np.arange(10).repeat(50)
+    >>> y = np.arange(10).repeat(50)
+    >>> _cov_std_error(x, y)
+    0.32587563558526406
+
+    """    
     n = len(x)
     # first term is the second symmetric bivariate central moment. an approximate
     # bias correction of n - root(2) is applied
