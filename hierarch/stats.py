@@ -913,7 +913,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.31480745060211, 6.1246583021896965)
+    (1.314807450602109, 6.124658302189696)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -929,7 +929,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5, 
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.12320618535452343, 7.562671938146341)
+    (-0.12320618535452432, 7.56267193814634)
 
     A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return the same or a very
@@ -938,7 +938,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95, 
     ...    compare='means', bootstraps=1000, 
     ...    permutations='all', random_state=1)
-    (1.31480745060211, 6.1246583021896965)
+    (1.314807450602109, 6.124658302189696)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.     
@@ -952,7 +952,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.8317584051133193, 1.6192897830814992)
+    (0.8317584051133191, 1.6192897830814992)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -995,19 +995,15 @@ def confidence_interval(
         random_state=rng,
     )
 
-    target_agg = grouper.transform(data, iterations=levels_to_agg)
-
     # make a guess as to the lower and upper bounds of the confidence interval
 
     null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
 
     current_lower = (
-        _compute_interval(np.array(null), null_agg, null_agg, treatment_col, alpha)
-        + start_slope
+        _compute_interval(np.array(null), null_agg, treatment_col, alpha)
     )
     current_upper = (
-        _compute_interval(np.array(null), null_agg, null_agg, treatment_col, 1 - alpha)
-        + start_slope
+        _compute_interval(np.array(null), null_agg, treatment_col, 1 - alpha)
     )
 
     # refine the bounds via iterative hypothesis testing
@@ -1023,7 +1019,7 @@ def confidence_interval(
     for i in range(iterations):
 
         bound_imposed_data = null_imposed_data.copy()
-        bound_imposed_data[:, -1] -= (start_slope - current_lower) * bound_imposed_data[
+        bound_imposed_data[:, -1] += (current_lower) * bound_imposed_data[
             :, treatment_col
         ]
         current_p, null = hypothesis_test(
@@ -1045,7 +1041,7 @@ def confidence_interval(
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
         current_lower = _compute_interval(
-            np.array(null), bound_agg, target_agg, treatment_col, alpha
+            np.array(null), bound_agg, treatment_col, alpha
         )
 
     else:
@@ -1058,7 +1054,7 @@ def confidence_interval(
     for i in range(iterations):
 
         bound_imposed_data = null_imposed_data.copy()
-        bound_imposed_data[:, -1] += (current_upper - start_slope) * bound_imposed_data[
+        bound_imposed_data[:, -1] += (current_upper) * bound_imposed_data[
             :, treatment_col
         ]
         current_p, null = hypothesis_test(
@@ -1079,7 +1075,7 @@ def confidence_interval(
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
         current_upper = _compute_interval(
-            np.array(null), bound_agg, target_agg, treatment_col, 1 - alpha
+            np.array(null), bound_agg, treatment_col, 1 - alpha
         )
 
     else:
@@ -1089,7 +1085,7 @@ def confidence_interval(
             stacklevel=2,
         )
 
-    return current_lower, current_upper
+    return current_lower + start_slope, current_upper + start_slope
 
 
 class ConvergenceWarning(Warning):
@@ -1106,18 +1102,47 @@ class ConvergenceWarning(Warning):
 
 
 @jit(nopython=True, cache=True)
-def _compute_interval(null, null_data, target_data, treatment_col, alpha):
+def _compute_interval(null, null_data, treatment_col, quantile):
+    """Unpivots a test statistic to a slope.
 
+    Parameters
+    ----------
+    null : 1D array
+    null_data : 2D array
+        Data used to compute the null distribution.
+    treatment_col : int
+    quantile : float between 0 and 1
+        Quantile of the null distribution to pull test statistic from.
+
+    Returns
+    -------
+    float
+
+    Examples
+    --------
+    >>> from hierarch.power import DataSimulator
+    >>> import scipy.stats as stats
+    >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
+    >>> hierarchy = [2, 4, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=2)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
+    >>> _compute_interval(null, data, 0, 0.025)
+    -1.6381035977603908
+
+    The test statistic distribution is essentially symmetric about 0. 
+
+    >>> _compute_interval(null, data, 0, 0.975)
+    1.6560744165754229
+
+    """
     x = null_data[:, treatment_col]
     y = null_data[:, -1]
 
     denom = _cov_std_error(x, y)
-    bound = np.quantile(null, alpha) * denom / bivar_central_moment(x, x)
+    bound = np.quantile(null, quantile) * denom / bivar_central_moment(x, x)
 
-    x = target_data[:, treatment_col]
-    y = target_data[:, -1]
-
-    bound = bound + (bivar_central_moment(x, y) / bivar_central_moment(x, x))
     return bound
 
 
