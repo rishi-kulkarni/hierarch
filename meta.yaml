@@ -1,5 +1,5 @@
 {% set name = "hierarch" %}
-{% set version = "1.1.1" %}
+{% set version = "1.1.2" %}
 
 
 package:
@@ -8,7 +8,7 @@ package:
 
 source:
   url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/hierarch-{{ version }}.tar.gz
-  sha256: debce85c306ec276aec85cf072c261bc8e7ff9df171ba1a5d66fc2310aa7d2c0
+  sha256: cc264b7d6d205e493e211c0a30d7cb1de07959cc1d5cc58025097eb6d31da077
 
 build:
   number: 0
