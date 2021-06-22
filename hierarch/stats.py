@@ -809,6 +809,22 @@ def _false_discovery_adjust(pvals, return_index=False):
     true for the comparison of interest. However, q-values are often called
     adjusted p-values in practice, so we do so here.
 
+    Examples
+    --------
+    >>> p_vals = np.arange(0.05, 1.05, step=0.1)
+    >>> p_vals
+    array([0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95])
+
+    >>> _false_discovery_adjust(p_vals)
+    array([0.5    , 0.75   , 0.83333, 0.875  , 0.9    , 0.91667, 0.92857,
+           0.9375 , 0.94444, 0.95   ])
+
+    A large number of rejections "remain" rejected.
+
+    >>> p_vals = np.arange(0.01, 0.05, step=0.01)
+    >>> _false_discovery_adjust(p_vals)
+    array([0.04, 0.04, 0.04, 0.04])
+
     """
 
     # argsort so we can sort a list of hypotheses, if need be
@@ -999,11 +1015,9 @@ def confidence_interval(
 
     null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
 
-    current_lower = (
-        _compute_interval(np.array(null), null_agg, treatment_col, alpha)
-    )
-    current_upper = (
-        _compute_interval(np.array(null), null_agg, treatment_col, 1 - alpha)
+    current_lower = _compute_interval(np.array(null), null_agg, treatment_col, alpha)
+    current_upper = _compute_interval(
+        np.array(null), null_agg, treatment_col, 1 - alpha
     )
 
     # refine the bounds via iterative hypothesis testing
@@ -1178,7 +1192,7 @@ def _cov_std_error(x, y):
     >>> _cov_std_error(x, y)
     0.32587563558526406
 
-    """    
+    """
     n = len(x)
     # first term is the second symmetric bivariate central moment. an approximate
     # bias correction of n - root(2) is applied
