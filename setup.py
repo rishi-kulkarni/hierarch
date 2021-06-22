@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="hierarch",
-    version="1.1.1",
+    version="1.1.2",
     author="Rishi Kulkarni",
     author_email="rkulk@stanford.edu",
     description="Hierarchical hypothesis testing library",

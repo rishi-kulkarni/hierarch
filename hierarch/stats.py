@@ -809,6 +809,22 @@ def _false_discovery_adjust(pvals, return_index=False):
     true for the comparison of interest. However, q-values are often called
     adjusted p-values in practice, so we do so here.
 
+    Examples
+    --------
+    >>> p_vals = np.arange(0.05, 1.05, step=0.1)
+    >>> p_vals
+    array([0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95])
+
+    >>> _false_discovery_adjust(p_vals)
+    array([0.5    , 0.75   , 0.83333, 0.875  , 0.9    , 0.91667, 0.92857,
+           0.9375 , 0.94444, 0.95   ])
+
+    A large number of rejections "remain" rejected.
+
+    >>> p_vals = np.arange(0.01, 0.05, step=0.01)
+    >>> _false_discovery_adjust(p_vals)
+    array([0.04, 0.04, 0.04, 0.04])
+
     """
 
     # argsort so we can sort a list of hypotheses, if need be
@@ -952,7 +968,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.7712039924329259, 1.5597743222883649)
+    (0.8317584051133191, 1.6192897830814992)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -995,17 +1011,13 @@ def confidence_interval(
         random_state=rng,
     )
 
-    target_agg = grouper.transform(data, iterations=levels_to_agg)
-
     # make a guess as to the lower and upper bounds of the confidence interval
 
     null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
 
-    current_lower = _compute_interval(
-        np.array(null), null_agg, target_agg, treatment_col, alpha
-    )
+    current_lower = _compute_interval(np.array(null), null_agg, treatment_col, alpha)
     current_upper = _compute_interval(
-        np.array(null), null_agg, target_agg, treatment_col, 1 - alpha
+        np.array(null), null_agg, treatment_col, 1 - alpha
     )
 
     # refine the bounds via iterative hypothesis testing
@@ -1014,16 +1026,16 @@ def confidence_interval(
     # find lower bound
 
     if compare == "means":
-        alternative_lower, alternative_upper = "less", "greater"
-    else:
         alternative_lower, alternative_upper = "greater", "less"
+    else:
+        alternative_lower, alternative_upper = "less", "greater"
 
     for i in range(iterations):
 
-        bound_imposed_data = data.copy()
-        bound_imposed_data[:, -1] -= (
-            current_lower * bound_imposed_data[:, treatment_col]
-        )
+        bound_imposed_data = null_imposed_data.copy()
+        bound_imposed_data[:, -1] += (current_lower) * bound_imposed_data[
+            :, treatment_col
+        ]
         current_p, null = hypothesis_test(
             bound_imposed_data,
             treatment_col,
@@ -1043,7 +1055,7 @@ def confidence_interval(
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
         current_lower = _compute_interval(
-            np.array(null), bound_agg, target_agg, treatment_col, alpha
+            np.array(null), bound_agg, treatment_col, alpha
         )
 
     else:
@@ -1055,10 +1067,10 @@ def confidence_interval(
 
     for i in range(iterations):
 
-        bound_imposed_data = data.copy()
-        bound_imposed_data[:, -1] -= (
-            current_upper * bound_imposed_data[:, treatment_col]
-        )
+        bound_imposed_data = null_imposed_data.copy()
+        bound_imposed_data[:, -1] += (current_upper) * bound_imposed_data[
+            :, treatment_col
+        ]
         current_p, null = hypothesis_test(
             bound_imposed_data,
             treatment_col,
@@ -1077,7 +1089,7 @@ def confidence_interval(
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
         current_upper = _compute_interval(
-            np.array(null), bound_agg, target_agg, treatment_col, 1 - alpha
+            np.array(null), bound_agg, treatment_col, 1 - alpha
         )
 
     else:
@@ -1087,7 +1099,7 @@ def confidence_interval(
             stacklevel=2,
         )
 
-    return current_lower, current_upper
+    return current_lower + start_slope, current_upper + start_slope
 
 
 class ConvergenceWarning(Warning):
@@ -1104,24 +1116,83 @@ class ConvergenceWarning(Warning):
 
 
 @jit(nopython=True, cache=True)
-def _compute_interval(null, null_data, target_data, treatment_col, alpha):
+def _compute_interval(null, null_data, treatment_col, quantile):
+    """Unpivots a test statistic to a slope.
 
+    Parameters
+    ----------
+    null : 1D array
+    null_data : 2D array
+        Data used to compute the null distribution.
+    treatment_col : int
+    quantile : float between 0 and 1
+        Quantile of the null distribution to pull test statistic from.
+
+    Returns
+    -------
+    float
+
+    Examples
+    --------
+    >>> from hierarch.power import DataSimulator
+    >>> import scipy.stats as stats
+    >>> paramlist = [[0, 2], [stats.norm], [stats.norm]]
+    >>> hierarchy = [2, 4, 3]
+    >>> datagen = DataSimulator(paramlist, random_state=2)
+    >>> datagen.fit(hierarchy)
+    >>> data = datagen.generate()
+    >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
+    >>> _compute_interval(null, data, 0, 0.025)
+    -1.6381035977603908
+
+    The test statistic distribution is essentially symmetric about 0. 
+
+    >>> _compute_interval(null, data, 0, 0.975)
+    1.6560744165754229
+
+    """
     x = null_data[:, treatment_col]
     y = null_data[:, -1]
 
     denom = _cov_std_error(x, y)
-    bound = np.quantile(null, alpha) * denom / bivar_central_moment(x, x)
+    bound = np.quantile(null, quantile) * denom / bivar_central_moment(x, x)
 
-    x = target_data[:, treatment_col]
-    y = target_data[:, -1]
-    denom = _cov_std_error(x, y)
-
-    bound = bound + (bivar_central_moment(x, y) / bivar_central_moment(x, x))
     return bound
 
 
 @jit(nopython=True, cache=True)
 def _cov_std_error(x, y):
+    """Computes an estimate of the standard error of the covariance between
+    two variables.
+
+    Parameters
+    ----------
+    x, y : 1D numeric arrays
+
+    Returns
+    -------
+    float
+
+    Examples
+    --------
+    >>> x = np.arange(10)
+    >>> y = np.arange(10)
+    >>> _cov_std_error(x, y)
+    2.683675672629574
+
+    More data with an identical relationship causes the standard error to decrease.
+
+    >>> x = np.arange(10).repeat(5)
+    >>> y = np.arange(10).repeat(5)
+    >>> _cov_std_error(x, y)
+    1.0574158590055294
+
+    >>> x = np.arange(10).repeat(50)
+    >>> y = np.arange(10).repeat(50)
+    >>> _cov_std_error(x, y)
+    0.32587563558526406
+
+    """
     n = len(x)
     # first term is the second symmetric bivariate central moment. an approximate
     # bias correction of n - root(2) is applied
