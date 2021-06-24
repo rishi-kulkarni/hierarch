@@ -3,8 +3,6 @@ from itertools import cycle
 from numba import jit
 from functools import lru_cache
 from hierarch.internal_functions import (
-    nb_reweighter,
-    nb_reweighter_real,
     nb_unique,
     id_cluster_counts,
     msp,
@@ -12,6 +10,7 @@ from hierarch.internal_functions import (
     _repeat,
     nb_fast_shuffle,
     nb_strat_shuffle,
+    weights_to_index,
 )
 
 
@@ -269,13 +268,21 @@ class Bootstrapper:
         else:
             skip = []
 
-        self.cluster_dict = id_cluster_counts(data[:, :y])
+        cluster_dict = id_cluster_counts(data[:, :y])
+        cluster_dict = tuple(reversed(list(cluster_dict.values())))
+        cluster_dict = tuple(map(tuple, cluster_dict))
         y %= data.shape[1]
-        self.shape = y
+        shape = y
 
-        self.columns_to_resample = np.array([True for k in range(self.shape)])
+        columns_to_resample = np.array([True for k in range(shape)])
         for key in skip:
-            self.columns_to_resample[key] = False
+            columns_to_resample[key] = False
+
+        kind = str(self.kind)
+
+        self.transform = self._bootstrapper_factory(
+            tuple(columns_to_resample), cluster_dict, shape, kind
+        )
 
     def transform(self, data, start: int):
         """Generate a bootstrapped sample from target data.
@@ -294,30 +301,140 @@ class Bootstrapper:
             according to "kind" argument.
 
         """
-        if self.kind == "weights":
-            resampled = nb_reweighter(
-                data,
-                self.columns_to_resample,
-                self.cluster_dict,
-                start,
-                self.shape,
-                indexes=False,
-            )
-        elif self.kind == "indexes":
-            resampled = nb_reweighter(
-                data,
-                self.columns_to_resample,
-                self.cluster_dict,
-                start,
-                self.shape,
-                indexes=True,
+        raise Exception("Use fit() before using transform().")
+
+    @staticmethod
+    @lru_cache()
+    def _bootstrapper_factory(columns_to_resample, clusternum_dict, shape, kind):
+
+        clusternum_dict = tuple(map(np.array, clusternum_dict))
+        columns_to_resample = np.array(columns_to_resample)
+
+        if kind == "weights":
+
+            @jit(nopython=True)
+            def _bootstrapper_impl(data, start):
+                out = data.astype(np.float64)
+                # at the start, everything is weighted equally
+                weights = np.array([1 for i in clusternum_dict[start]])
+
+                for key in range(start, shape):
+                    # fetch design matrix info for current column
+                    to_do = clusternum_dict[key]
+                    # preallocate the full array for new_weight
+                    new_weight = np.empty(to_do.sum(), np.int64)
+                    place = 0
+
+                    # if not resampling this column, new_weight is the prior column's weights
+                    if not columns_to_resample[key]:
+                        for idx, v in enumerate(to_do):
+                            new_weight[place : place + v] = np.array(
+                                [weights[idx] for m in range(v.item())]
+                            )
+                            place += v
+
+                    # else do a multinomial experiment to generate new_weight
+                    else:
+                        for idx, v in enumerate(to_do):
+                            # v*weights[idx] carries over weights from previous columns
+                            new_weight[place : place + v] = np.random.multinomial(
+                                v * weights[idx], [1 / v] * v
+                            )
+                            place += v
+
+                    weights = new_weight
+
+                out[:, -1] = out[:, -1] * weights
+                return out
+
+        elif kind == "indexes":
+
+            @jit(nopython=True)
+            def _bootstrapper_impl(data, start):
+                out = data.astype(np.float64)
+                # at the start, everything is weighted equally
+                weights = np.array([1 for i in clusternum_dict[start]])
+
+                for key in range(start, shape):
+                    # fetch design matrix info for current column
+                    to_do = clusternum_dict[key]
+                    # preallocate the full array for new_weight
+                    new_weight = np.empty(to_do.sum(), np.int64)
+                    place = 0
+
+                    # if not resampling this column, new_weight is the prior column's weights
+                    if not columns_to_resample[key]:
+                        for idx, v in enumerate(to_do):
+                            new_weight[place : place + v] = np.array(
+                                [weights[idx] for m in range(v.item())]
+                            )
+                            place += v
+
+                    # else do a multinomial experiment to generate new_weight
+                    else:
+                        for idx, v in enumerate(to_do):
+                            # v*weights[idx] carries over weights from previous columns
+                            new_weight[place : place + v] = np.random.multinomial(
+                                v * weights[idx], [1 / v] * v
+                            )
+                            place += v
+
+                    weights = new_weight
+
+                indexes = weights_to_index(weights)
+                return out[indexes]
+
+        elif kind == "bayesian":
+
+            @jit(nopython=True)
+            def _bootstrapper_impl(data, start):
+                out = data.astype(np.float64)
+                # at the start, everything is weighted equally
+                # dype is float64 because weights can be any real number
+                weights = np.array(
+                    [1 for i in clusternum_dict[start]], dtype=np.float64
+                )
+
+                for key in range(start, shape):
+                    # fetch design matrix info for current column
+                    to_do = clusternum_dict[key]
+                    # preallocate the full array for new_weight
+                    new_weight = np.empty(to_do.sum(), np.float64)
+                    place = 0
+
+                    # if not resampling this column, new_weight is all 1
+                    if not columns_to_resample[key]:
+                        for idx, v in enumerate(to_do):
+                            new_weight[place : place + v] = np.array(
+                                [weights[idx] for m in range(v.item())],
+                                dtype=np.float64,
+                            )
+                            place += v
+
+                    # else do a dirichlet experiment to generate new_weight
+                    else:
+                        for idx, v in enumerate(to_do):
+                            # multiplying by weights[idx] carries over prior columns
+                            new_weight[place : place + v] = (
+                                np.random.dirichlet(
+                                    [1 for a in range(v.item())], size=None
+                                )
+                                * weights[idx]
+                                * v.item()
+                            )
+                            place += v
+
+                    weights = new_weight
+
+                out[:, -1] = out[:, -1] * weights
+                return out
+
+        else:
+            raise KeyError(
+                "No such bootstrapping algorithm. kind must be 'weights' or 'indexes' or 'bayesian'"
             )
 
-        elif self.kind == "bayesian":
-            resampled = nb_reweighter_real(
-                data, self.columns_to_resample, self.cluster_dict, start, self.shape
-            )
-        return resampled
+        return _bootstrapper_impl
 
 
 class Permuter:
