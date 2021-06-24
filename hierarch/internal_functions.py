@@ -173,7 +173,7 @@ def bounded_uint(ub):
     Returns
     -------
     int
-    """    
+    """
     x = np.random.randint(low=2 ** 32)
     m = ub * x
     l = np.uint32(m)
@@ -193,7 +193,7 @@ def bounded_uint(ub):
 @nb.jit(nopython=True, cache=True)
 def nb_fast_shuffle(arr):
     """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers.
-    """    
+    """
     i = arr.shape[0] - 1
     while i > 0:
         j = bounded_uint(i + 1)
@@ -211,7 +211,7 @@ def nb_strat_shuffle(arr, stratification):
         Target array.
     stratification : 1D array-like
         Ranges to shuffle within. Must be sorted.
-    """    
+    """
     for v, w in zip(stratification[:-1], stratification[1:]):
         i = w - v - 1
         while i > 0:
@@ -288,24 +288,20 @@ def nb_reweighter(
         new_weight = np.empty(to_do.sum(), np.int64)
         place = 0
 
-        # if not resampling this column, new_weight is all 1
+        # if not resampling this column, new_weight is the prior columns weights
         if not columns_to_resample[key]:
             for idx, v in enumerate(to_do):
-                num = np.array([1 for m in range(v.item())])
-                # carry over resampled weights from previous columns
-                num *= weights[idx]
-                for idx_2, w in enumerate(num):
-                    new_weight[place + idx_2] = w.item()
+                num = np.array([weights[idx] for m in range(v.item())])
+                new_weight[place : place + v] = num
                 place += v
 
         # else do a multinomial experiment to generate new_weight
         else:
             for idx, v in enumerate(to_do):
-                num = v.item()
-                # num*weights[idx] carries over weights from previous columns
-                randos = np.random.multinomial(num * weights[idx], [1 / num] * num)
-                for idx_2, w in enumerate(randos):
-                    new_weight[place + idx_2] = w.item()
+                # v*weights[idx] carries over weights from previous columns
+                new_weight[place : place + v] = np.random.multinomial(
+                    v * weights[idx], [1 / v] * v
+                )
                 place += v
 
         weights = new_weight
@@ -357,10 +353,10 @@ def nb_reweighter_real(data, columns_to_resample, clusternum_dict, start, shape)
         # if not resampling this column, new_weight is all 1
         if not columns_to_resample[key]:
             for idx, v in enumerate(to_do):
-                num = np.array([1 for m in range(v.item())], dtype=np.float64)
-                num *= weights[idx]
-                for idx_2, w in enumerate(num):
-                    new_weight[place + idx_2] = w.item()
+                num = np.array(
+                    [weights[idx] for m in range(v.item())], dtype=np.float64
+                )
+                new_weight[place : place + v] = num
                 place += v
 
         # else do a dirichlet experiment to generate new_weight
@@ -368,9 +364,9 @@ def nb_reweighter_real(data, columns_to_resample, clusternum_dict, start, shape)
             for idx, v in enumerate(to_do):
                 num = [1 for a in range(v.item())]
                 # multiplying by weights[idx] carries over prior columns
-                randos = np.random.dirichlet(num, size=None) * weights[idx] * v.item()
-                for idx_2, w in enumerate(randos):
-                    new_weight[place + idx_2] = w.item()
+                new_weight[place : place + v] = (
+                    np.random.dirichlet(num, size=None) * weights[idx] * v.item()
+                )
                 place += v
 
         weights = new_weight
@@ -590,5 +586,4 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
-
 
