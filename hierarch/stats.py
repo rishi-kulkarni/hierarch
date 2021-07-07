@@ -240,7 +240,7 @@ def _grabber(X, y, treatment_labels):
 
 def hypothesis_test(
     data_array,
-    treatment_col: int,
+    treatment_col,
     compare="corr",
     alternative="two-sided",
     skip=None,
@@ -261,9 +261,10 @@ def hypothesis_test(
         Array-like containing both the independent and dependent variables to
         be analyzed. It's assumed that the final (rightmost) column
         contains the dependent variable values.
-    treatment_col : int
+    treatment_col : int or str
         The index number of the column containing "two samples" to be compared.
-        Indexing starts at 0.
+        Indexing starts at 0. If input data is a pandas DataFrame, this can be
+        the name of the column.
     compare : str, optional
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
@@ -354,6 +355,8 @@ def hypothesis_test(
 
     # turns the input array or dataframe into a float64 array
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
+        if isinstance(data_array, pd.DataFrame) and isinstance(treatment_col, str):
+            treatment_col = int(data_array.columns.get_loc(treatment_col))
         data = _preprocess_data(data_array)
     else:
         raise TypeError("Input data must be ndarray or DataFrame.")
@@ -490,7 +493,7 @@ def hypothesis_test(
 
 def multi_sample_test(
     data_array,
-    treatment_col: int,
+    treatment_col,
     hypotheses="all",
     correction="fdr",
     compare="means",
@@ -511,9 +514,10 @@ def multi_sample_test(
         Array-like containing both the independent and dependent variables to
         be analyzed. It's assumed that the final (rightmost) column
         contains the dependent variable values.
-    treatment_col : int
+    treatment_col : int or str
         The index number of the column containing labels to be compared.
-        Indexing starts at 0.
+        Indexing starts at 0. If input data is a pandas DataFrame, this can
+        be the column name.
     hypotheses : list of two-element lists or "all", optional
         Hypotheses to be tested. If 'all' every pairwise comparison will be
         tested. Can be passed a list of lists to restrict comparisons, which
@@ -667,6 +671,8 @@ def multi_sample_test(
 
     # coerce data into an object array
     if isinstance(data_array, pd.DataFrame):
+        if isinstance(treatment_col, str):
+            treatment_col = data_array.columns.get_loc(treatment_col)
         data = data_array.to_numpy()
     elif isinstance(data_array, np.ndarray):
         data = data_array
@@ -870,9 +876,10 @@ def confidence_interval(
         Array-like containing both the independent and dependent variables to
         be analyzed. It's assumed that the final (rightmost) column
         contains the dependent variable values.
-    treatment_col : int
+    treatment_col : int or str
         The index number of the column containing "two samples" to be compared.
-        Indexing starts at 0.
+        Indexing starts at 0. If input data is a pandas DataFrame, this can be
+        the column name.
     interval : float, optional
         Percentage value indicating the confidence interval's coverage, by default 95
     iterations : int, optional
@@ -980,6 +987,8 @@ def confidence_interval(
 
     # turns the input array or dataframe into a float64 array
     if isinstance(data_array, (np.ndarray, pd.DataFrame)):
+        if isinstance(data_array, pd.DataFrame) and isinstance(treatment_col, str):
+            treatment_col = int(data_array.columns.get_loc(treatment_col))
         data = _preprocess_data(data_array)
     else:
         raise TypeError("Input data must be ndarray or DataFrame.")

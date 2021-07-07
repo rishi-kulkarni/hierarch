@@ -3,8 +3,6 @@ from itertools import cycle
 from numba import jit
 from functools import lru_cache
 from hierarch.internal_functions import (
-    nb_reweighter,
-    nb_reweighter_real,
     nb_unique,
     id_cluster_counts,
     msp,
@@ -12,6 +10,7 @@ from hierarch.internal_functions import (
     _repeat,
     nb_fast_shuffle,
     nb_strat_shuffle,
+    weights_to_index,
 )
 
 
@@ -269,13 +268,21 @@ class Bootstrapper:
         else:
             skip = []
 
-        self.cluster_dict = id_cluster_counts(data[:, :y])
+        cluster_dict = id_cluster_counts(data[:, :y])
+        cluster_dict = tuple(reversed(list(cluster_dict.values())))
+        cluster_dict = tuple(map(tuple, cluster_dict))
         y %= data.shape[1]
-        self.shape = y
+        shape = y
 
-        self.columns_to_resample = np.array([True for k in range(self.shape)])
+        columns_to_resample = np.array([True for k in range(shape)])
         for key in skip:
-            self.columns_to_resample[key] = False
+            columns_to_resample[key] = False
+
+        kind = str(self.kind)
+
+        self.transform = _bootstrapper_factory(
+            tuple(columns_to_resample), cluster_dict, shape, kind
+        )
 
     def transform(self, data, start: int):
         """Generate a bootstrapped sample from target data.
@@ -294,30 +301,140 @@ class Bootstrapper:
             according to "kind" argument.
 
         """
-        if self.kind == "weights":
-            resampled = nb_reweighter(
-                data,
-                self.columns_to_resample,
-                self.cluster_dict,
-                start,
-                self.shape,
-                indexes=False,
-            )
-        elif self.kind == "indexes":
-            resampled = nb_reweighter(
-                data,
-                self.columns_to_resample,
-                self.cluster_dict,
-                start,
-                self.shape,
-                indexes=True,
+        raise Exception("Use fit() before using transform().")
+
+@lru_cache()
+def _bootstrapper_factory(columns_to_resample, clusternum_dict, shape, kind):
+    """Factory function that returns the appropriate transform().
+    """
+    clusternum_dict = tuple(map(np.array, clusternum_dict))
+    columns_to_resample = np.array(columns_to_resample)
+
+    if kind == "weights":
+
+        @jit(nopython=True)
+        def _bootstrapper_impl(data, start):
+            out = data.astype(np.float64)
+            # at the start, everything is weighted equally
+            weights = np.array([1 for i in clusternum_dict[start]])
+
+            for key in range(start, shape):
+                # fetch design matrix info for current column
+                to_do = clusternum_dict[key]
+                # preallocate the full array for new_weight
+                new_weight = np.empty(to_do.sum(), np.int64)
+                place = 0
+
+                # if not resampling this column, new_weight is the prior column's weights
+                if not columns_to_resample[key]:
+                    for idx, v in enumerate(to_do):
+                        new_weight[place : place + v] = np.array(
+                            [weights[idx] for m in range(v.item())]
+                        )
+                        place += v
+
+                # else do a multinomial experiment to generate new_weight
+                else:
+                    for idx, v in enumerate(to_do):
+                        # v*weights[idx] carries over weights from previous columns
+                        new_weight[place : place + v] = np.random.multinomial(
+                            v * weights[idx], [1 / v] * v
+                        )
+                        place += v
+
+                weights = new_weight
+
+            out[:, -1] = out[:, -1] * weights
+            return out
+
+    elif kind == "indexes":
+
+        @jit(nopython=True)
+        def _bootstrapper_impl(data, start):
+            out = data.astype(np.float64)
+            # at the start, everything is weighted equally
+            weights = np.array([1 for i in clusternum_dict[start]])
+
+            for key in range(start, shape):
+                # fetch design matrix info for current column
+                to_do = clusternum_dict[key]
+                # preallocate the full array for new_weight
+                new_weight = np.empty(to_do.sum(), np.int64)
+                place = 0
+
+                # if not resampling this column, new_weight is the prior column's weights
+                if not columns_to_resample[key]:
+                    for idx, v in enumerate(to_do):
+                        new_weight[place : place + v] = np.array(
+                            [weights[idx] for m in range(v.item())]
+                        )
+                        place += v
+
+                # else do a multinomial experiment to generate new_weight
+                else:
+                    for idx, v in enumerate(to_do):
+                        # v*weights[idx] carries over weights from previous columns
+                        new_weight[place : place + v] = np.random.multinomial(
+                            v * weights[idx], [1 / v] * v
+                        )
+                        place += v
+
+                weights = new_weight
+
+            indexes = weights_to_index(weights)
+            return out[indexes]
+
+    elif kind == "bayesian":
+
+        @jit(nopython=True)
+        def _bootstrapper_impl(data, start):
+            out = data.astype(np.float64)
+            # at the start, everything is weighted equally
+            # dype is float64 because weights can be any real number
+            weights = np.array(
+                [1 for i in clusternum_dict[start]], dtype=np.float64
             )
 
-        elif self.kind == "bayesian":
-            resampled = nb_reweighter_real(
-                data, self.columns_to_resample, self.cluster_dict, start, self.shape
-            )
-        return resampled
+            for key in range(start, shape):
+                # fetch design matrix info for current column
+                to_do = clusternum_dict[key]
+                # preallocate the full array for new_weight
+                new_weight = np.empty(to_do.sum(), np.float64)
+                place = 0
+
+                # if not resampling this column, new_weight is all 1
+                if not columns_to_resample[key]:
+                    for idx, v in enumerate(to_do):
+                        new_weight[place : place + v] = np.array(
+                            [weights[idx] for m in range(v.item())],
+                            dtype=np.float64,
+                        )
+                        place += v
+
+                # else do a dirichlet experiment to generate new_weight
+                else:
+                    for idx, v in enumerate(to_do):
+                        # multiplying by weights[idx] carries over prior columns
+                        new_weight[place : place + v] = (
+                            np.random.dirichlet(
+                                [1 for a in range(v.item())], size=None
+                            )
+                            * weights[idx]
+                            * v.item()
+                        )
+                        place += v
+
+                weights = new_weight
+
+            out[:, -1] = out[:, -1] * weights
+            return out
+
+    else:
+        raise KeyError(
+            "No such bootstrapping algorithm. kind must be 'weights' or 'indexes' or 'bayesian'"
+        )
+
+    return _bootstrapper_impl
 
 
 class Permuter:
@@ -441,9 +558,9 @@ class Permuter:
             col_values = values[:, -2].copy()
             self.iterator = cycle(msp(col_values))
             if len(col_values) == len(data):
-                self.transform = self._exact_return(col_to_permute, self.iterator)
+                self.transform = _exact_return(col_to_permute, self.iterator)
             else:
-                self.transform = self._exact_repeat_return(
+                self.transform = _exact_repeat_return(
                     col_to_permute, self.iterator, counts
                 )
 
@@ -458,13 +575,13 @@ class Permuter:
             keys = tuple(keys.tolist())
 
             if indexes.size == len(data):
-                self.transform = self._random_return(col_to_permute, keys)
+                self.transform = _random_return(col_to_permute, keys)
 
             else:
                 col_values = data[:, col_to_permute][indexes]
                 col_values = tuple(col_values.tolist())
                 counts = tuple(counts.tolist())
-                self.transform = self._random_repeat_return(
+                self.transform = _random_repeat_return(
                     col_to_permute, col_values, keys, counts
                 )
 
@@ -486,75 +603,71 @@ class Permuter:
         # four static methods defined below
         raise Exception("Use fit() before calling transform.")
 
-    @staticmethod
-    def _exact_return(col_to_permute, generator):
-        """Transformer when exact is True and permutations are unrestricted.
-        """
+def _exact_return(col_to_permute, generator):
+    """Transformer when exact is True and permutations are unrestricted.
+    """
 
-        def _exact_return_impl(data):
-            data[:, col_to_permute] = next(generator)
+    def _exact_return_impl(data):
+        data[:, col_to_permute] = next(generator)
+        return data
+
+    return _exact_return_impl
+
+def _exact_repeat_return(col_to_permute, generator, counts):
+    """Transformer when exact is True and permutations are restricted by
+    repetition of treated entities.
+    """
+
+    def _rep_iter_return_impl(data):
+        data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
+        return data
+
+    return _rep_iter_return_impl
+
+@lru_cache()
+def _random_return(col_to_permute, keys):
+    """Transformer when exact is False and repetition is not required.
+    """
+
+    if col_to_permute == 0:
+
+        @jit(nopython=True)
+        def _random_return_impl(data):
+            nb_fast_shuffle(data[:, col_to_permute])
             return data
 
-        return _exact_return_impl
+    else:
 
-    @staticmethod
-    def _exact_repeat_return(col_to_permute, generator, counts):
-        """Transformer when exact is True and permutations are restricted by
-        repetition of treated entities.
-        """
-
-        def _rep_iter_return_impl(data):
-            data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
+        @jit(nopython=True)
+        def _random_return_impl(data):
+            nb_strat_shuffle(data[:, col_to_permute], keys)
             return data
 
-        return _rep_iter_return_impl
+    return _random_return_impl
 
-    @staticmethod
-    @lru_cache()
-    def _random_return(col_to_permute, keys):
-        """Transformer when exact is False and repetition is not required.
-        """
+@lru_cache()
+def _random_repeat_return(col_to_permute, col_values, keys, counts):
+    """Transformer when exact is False and repetition is required.
+    """
+    col_values = np.array(col_values)
+    counts = np.array(counts)
+    if col_to_permute == 0:
 
-        if col_to_permute == 0:
+        @jit(nopython=True)
+        def _random_repeat_return_impl(data):
+            shuffled_col_values = col_values.copy()
+            nb_fast_shuffle(shuffled_col_values)
+            data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
+            return data
 
-            @jit(nopython=True)
-            def _random_return_impl(data):
-                nb_fast_shuffle(data[:, col_to_permute])
-                return data
+    else:
 
-        else:
+        @jit(nopython=True)
+        def _random_repeat_return_impl(data):
+            shuffled_col_values = col_values.copy()
+            nb_strat_shuffle(shuffled_col_values, keys)
+            data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
+            return data
 
-            @jit(nopython=True)
-            def _random_return_impl(data):
-                nb_strat_shuffle(data[:, col_to_permute], keys)
-                return data
-
-        return _random_return_impl
-
-    @staticmethod
-    @lru_cache()
-    def _random_repeat_return(col_to_permute, col_values, keys, counts):
-        """Transformer when exact is False and repetition is required.
-        """
-        col_values = np.array(col_values)
-        counts = np.array(counts)
-        if col_to_permute == 0:
-
-            @jit(nopython=True)
-            def _random_repeat_return_impl(data):
-                shuffled_col_values = col_values.copy()
-                nb_fast_shuffle(shuffled_col_values)
-                data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
-                return data
-
-        else:
-
-            @jit(nopython=True)
-            def _random_repeat_return_impl(data):
-                shuffled_col_values = col_values.copy()
-                nb_strat_shuffle(shuffled_col_values, keys)
-                data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
-                return data
-
-        return _random_repeat_return_impl
+    return _random_repeat_return_impl
 

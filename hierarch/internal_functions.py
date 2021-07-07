@@ -173,7 +173,7 @@ def bounded_uint(ub):
     Returns
     -------
     int
-    """    
+    """
     x = np.random.randint(low=2 ** 32)
     m = ub * x
     l = np.uint32(m)
@@ -193,7 +193,7 @@ def bounded_uint(ub):
 @nb.jit(nopython=True, cache=True)
 def nb_fast_shuffle(arr):
     """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers.
-    """    
+    """
     i = arr.shape[0] - 1
     while i > 0:
         j = bounded_uint(i + 1)
@@ -211,7 +211,7 @@ def nb_strat_shuffle(arr, stratification):
         Target array.
     stratification : 1D array-like
         Ranges to shuffle within. Must be sorted.
-    """    
+    """
     for v, w in zip(stratification[:-1], stratification[1:]):
         i = w - v - 1
         while i > 0:
@@ -246,137 +246,6 @@ def id_cluster_counts(design):
         to_analyze, counts = nb_unique(to_analyze[:, :-1])[0::2]
         cluster_dict[i] = counts
     return cluster_dict
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_reweighter(
-    data, columns_to_resample, clusternum_dict, start: int, shape: int, indexes=True
-):
-    """Internal function for bootstrapping a design matrix with integer
-    weights.
-
-    Parameters
-    ----------
-    data : 2D array
-        Target data to be bootstrapped.
-    columns_to_resample : 1D bool array-like
-        False for columns to be skipped in the resampling plan.
-    clusternum_dict : TypedDict
-        Hierarchy dictionary produced by id_cluster_counts
-    start : int
-        First column of the data matrix to resample
-    shape : int
-        Last column of the data matrix to resample
-    indexes : bool, optional
-        If True, returns a reindexed array. If False, returns
-        a reweighted array, by default True.
-
-    Returns
-    -------
-    2D array
-        Nonparametrically bootstrapped sample from the input data array.
-    """
-
-    out = data.astype(np.float64)
-    # at the start, everything is weighted equally
-    weights = np.array([1 for i in clusternum_dict[start]])
-
-    for key in range(start, shape):
-        # fetch design matrix info for current column
-        to_do = clusternum_dict[key]
-        # preallocate the full array for new_weight
-        new_weight = np.empty(to_do.sum(), np.int64)
-        place = 0
-
-        # if not resampling this column, new_weight is all 1
-        if not columns_to_resample[key]:
-            for idx, v in enumerate(to_do):
-                num = np.array([1 for m in range(v.item())])
-                # carry over resampled weights from previous columns
-                num *= weights[idx]
-                for idx_2, w in enumerate(num):
-                    new_weight[place + idx_2] = w.item()
-                place += v
-
-        # else do a multinomial experiment to generate new_weight
-        else:
-            for idx, v in enumerate(to_do):
-                num = v.item()
-                # num*weights[idx] carries over weights from previous columns
-                randos = np.random.multinomial(num * weights[idx], [1 / num] * num)
-                for idx_2, w in enumerate(randos):
-                    new_weight[place + idx_2] = w.item()
-                place += v
-
-        weights = new_weight
-
-    if indexes is False:
-        out[:, -1] = out[:, -1] * weights
-        return out
-    else:
-        indexes = weights_to_index(weights)
-        return out[indexes]
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_reweighter_real(data, columns_to_resample, clusternum_dict, start, shape):
-    """Internal function for bootstrapping a design matrix with real number
-    weights.
-
-    Parameters
-    ----------
-    data : 2D array
-        Target data to be bootstrapped.
-    columns_to_resample : 1D bool array-like
-        False for columns to be skipped in the resampling plan.
-    clusternum_dict : TypedDict
-        Hierarchy dictionary produced by id_cluster_counts
-    start : int
-        First column of the data matrix to resample
-    shape : int
-        Last column of the data matrix to resample
-
-    Returns
-    -------
-    2D array
-        Nonparametrically bootstrapped sample from the input data array.
-    """
-
-    out = data.astype(np.float64)
-    # at the start, everything is weighted equally
-    # dype is float64 because weights can be any real number
-    weights = np.array([1 for i in clusternum_dict[start]], dtype=np.float64)
-
-    for key in range(start, shape):
-        # fetch design matrix info for current column
-        to_do = clusternum_dict[key]
-        # preallocate the full array for new_weight
-        new_weight = np.empty(to_do.sum(), np.float64)
-        place = 0
-
-        # if not resampling this column, new_weight is all 1
-        if not columns_to_resample[key]:
-            for idx, v in enumerate(to_do):
-                num = np.array([1 for m in range(v.item())], dtype=np.float64)
-                num *= weights[idx]
-                for idx_2, w in enumerate(num):
-                    new_weight[place + idx_2] = w.item()
-                place += v
-
-        # else do a dirichlet experiment to generate new_weight
-        else:
-            for idx, v in enumerate(to_do):
-                num = [1 for a in range(v.item())]
-                # multiplying by weights[idx] carries over prior columns
-                randos = np.random.dirichlet(num, size=None) * weights[idx] * v.item()
-                for idx_2, w in enumerate(randos):
-                    new_weight[place + idx_2] = w.item()
-                place += v
-
-        weights = new_weight
-
-    out[:, -1] = out[:, -1] * weights
-    return out
 
 
 @nb.jit(nopython=True, cache=True)
@@ -590,5 +459,4 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
-
 

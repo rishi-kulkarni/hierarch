@@ -2,7 +2,7 @@
 
 ## A Hierarchical Resampling Package for Python
 
-Version 1.1.2
+Version 1.1.3
 
 hierarch is a package for hierarchical resampling (bootstrapping, permutation) of datasets in Python. Because for loops are ultimately intrinsic to cluster-aware resampling, hierarch uses Numba to accelerate many of its key functions.
 
@@ -13,6 +13,7 @@ hierarch has several functions to assist in performing resampling-based (and the
 1. [Introduction](#introduction)
 2. [Setup](#setup)
 3. [Documentation](#documentation)
+4. [Citation](#citation)
 
 
 <a name="introduction"></a>
@@ -51,3 +52,11 @@ Alternatively, you can install from Anaconda.
 <a name="documentation"></a>
 ## Documentation
 Check out our user guide at [readthedocs](https://hierarch.readthedocs.io/).
+
+<a name="citation"></a>
+## Citation
+If hierarch helps you analyze your data, please consider citing it. The manuscript also
+contains a set of simulations validating hierarchical randomization tests in a variety of
+conditions.
+
+Analyzing Nested Experimental Designs – A User-Friendly Resampling Method to Determine Experimental Significance. Rishikesh U. Kulkarni, Catherine L. Wang, Carolyn R. Bertozzi. bioRxiv 2021.06.29.450439; doi: https://doi.org/10.1101/2021.06.29.450439
