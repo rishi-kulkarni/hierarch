@@ -55,3 +55,9 @@ The code to perform a hierarchical permutation t-test on this dataset looks like
 
     hypothesis_test(data, treatment_col=0,
                     bootstraps=1000, permutations='all')
+
+If you find hierarch useful for analyzing your data, please consider citing it. 
+
+Analyzing Nested Experimental Designs – A User-Friendly Resampling Method to Determine Experimental Significance
+Rishikesh U. Kulkarni, Catherine L. Wang, Carolyn R. Bertozzi
+bioRxiv 2021.06.29.450439; doi: https://doi.org/10.1101/2021.06.29.450439
