@@ -1,4 +1,3 @@
-import enum
 import unittest
 from hierarch import internal_functions
 from hierarch.power import DataSimulator
