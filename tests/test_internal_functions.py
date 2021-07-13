@@ -177,5 +177,39 @@ class TestIDClusters(unittest.TestCase):
                         self.assertEqual(hierarchy[idx][idx_2], v)
 
 
+class TestWeightstoIndex(unittest.TestCase):
+    def test_weights_to_index(self):
+        """
+        Tests that weights_to_index gives same array as np.arange(weights.size).repeat(weights)
+        """
+        weights = np.random.randint(10, size=10)
+        indexes = internal_functions.weights_to_index(weights)
+        np_indexes = np.arange(weights.size).repeat(weights)
+        for idx, v in enumerate(indexes):
+            self.assertEqual(v, np_indexes[idx])
+
+
+class TestMultisetPermutations(unittest.TestCase):
+    def test_msp(self):
+        """
+        Tests to make sure the number of permutations is equal to the expected amount based
+        on the unique elements in the list.
+        """
+        lists = (
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 3, 3],
+            [1, 2, 3, 4, 5, 6],
+            [1, 1, 1, 2, 2, 2, 3, 3, 3],
+        )
+        for set in lists:
+            num = np.math.factorial(len(set))
+            denom = 1
+            for v in iter(np.unique(set, return_counts=True)[1]):
+                denom *= np.math.factorial(v)
+            expected_length = num / denom
+
+            self.assertEqual(expected_length, len(list(internal_functions.msp(set))))
+
+
 if __name__ == "__main__":
     unittest.main()
