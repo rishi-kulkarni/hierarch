@@ -29,7 +29,7 @@ class DataSimulator:
         self.parameters = paramlist
         self.random_generator = np.random.default_rng(random_state)
 
-    def fit(self, hierarchy=[]):
+    def fit(self, hierarchy):
         """Fit the DataSimulator to a hierarchy.
 
         Parameters
@@ -69,7 +69,10 @@ class DataSimulator:
         
 
         """
-        self.container = _make_ref_container(hierarchy.copy())
+        try:
+            self.container = _make_ref_container(hierarchy.copy())
+        except TypeError:
+            raise TypeError("hierarchy must be a list of integers.")
 
     def generate(self):
         """Generate a simulated dataset based on specified parameters and hierarchy.
@@ -106,9 +109,12 @@ class DataSimulator:
                [ 2.        ,  3.        ,  3.        ,  1.45309889]])
         """
         output = self.container.copy()
-        output[:, -1] = _gen_fake_data(
-            self.container, self.parameters, random_state=self.random_generator
-        )
+        try:
+            output[:, -1] = _gen_fake_data(
+                self.container, self.parameters, random_state=self.random_generator
+            )
+        except AttributeError:
+            raise AttributeError("parameters must be a list of list of integers or scipy.stats distributions.")
         return output
 
 
@@ -168,7 +174,7 @@ def _gen_fake_data(reference, params, random_state=None):
         return fakedata[:, -2]
 
 
-def _make_ref_container(samples_per_level=[]):
+def _make_ref_container(samples_per_level):
     """Converts a hierarchy list into a design matrix.
 
     Parameters
