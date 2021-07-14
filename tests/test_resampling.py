@@ -1,3 +1,4 @@
+from hierarch import internal_functions
 from multiprocessing.sharedctypes import Value
 import unittest
 import hierarch.resampling
@@ -80,6 +81,66 @@ class TestBootstrapper(unittest.TestCase):
         with self.assertRaises(Exception) as raises:
             boot.transform(self.data_1, start=1)
         self.assertIn("Use fit() before using transform().", str(raises.exception))
+
+class TestPermuter(unittest.TestCase):
+    orig_data = np.arange(100).reshape((50, 2))
+
+    def test_random(self):
+        '''
+        Tests random permutation.
+        '''
+        shuf_1 = self.orig_data.copy()
+        shuf_2 = self.orig_data.copy()
+
+        permuter = hierarch.resampling.Permuter(random_state = 1)
+        permuter.fit(shuf_1, 0, exact=False)
+        permuter.transform(shuf_1)
+
+        permuter = hierarch.resampling.Permuter(random_state = 1)
+        permuter.fit(shuf_2, 0, exact=False)
+        permuter.transform(shuf_2)
+
+        for idx, v in enumerate(shuf_1[:,0]):
+            self.assertEqual(v, shuf_2[:,0][idx])
+
+        for i in range(10):
+            permuter.transform(shuf_1)
+            shuf_1[:,0].sort()
+
+            for idx, v in enumerate(shuf_1[:,0]):
+                self.assertEqual(v, self.orig_data[:,0][idx])
+
+    def test_exact(self):
+        '''
+        Test that exact permutations are generated in the same order.
+        '''
+        shuf_1 = self.orig_data.copy()
+        shuf_2 = self.orig_data.copy()
+
+        permuter = hierarch.resampling.Permuter()
+        permuter.fit(shuf_1, 0, exact=True)
+        permuter.transform(shuf_1)
+
+        permuter = hierarch.resampling.Permuter()
+        permuter.fit(shuf_2, 0, exact=True)
+        permuter.transform(shuf_2)
+
+        for idx, v in enumerate(shuf_1[:,0]):
+            self.assertEqual(v, shuf_2[:,0][idx])
+
+        for i in range(10):
+            permuter.transform(shuf_1)
+            shuf_1[:,0].sort()
+
+            for idx, v in enumerate(shuf_1[:,0]):
+                self.assertEqual(v, self.orig_data[:,0][idx])
+
+    def test_permuter_exceptions(self):
+        permuter = hierarch.resampling.Permuter()
+        with self.assertRaises(Exception) as raises:
+            permuter.transform(self.orig_data)        
+        self.assertIn("Use fit() before using transform().", str(raises.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
