@@ -251,10 +251,8 @@ class Bootstrapper:
                     "Bootstrapper can only handle numeric datatypes. Please pre-process your data."
                 )
         except AttributeError:
-            print(
-                "Bootstrapper can only handle numpy arrays. Please pre-process your data."
+            raise AttributeError("Bootstrapper can only handle numpy arrays. Please pre-process your data."
             )
-            raise
 
         if skip is not None:
             skip = list(skip)
