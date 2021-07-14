@@ -69,6 +69,10 @@ class DataSimulator:
         
 
         """
+
+        if len(hierarchy) != len(self.parameters):
+            raise ValueError("hierarchy and parameters should be the same length.")
+
         try:
             self.container = _make_ref_container(hierarchy.copy())
         except TypeError:
@@ -114,7 +118,9 @@ class DataSimulator:
                 self.container, self.parameters, random_state=self.random_generator
             )
         except AttributeError:
-            raise AttributeError("parameters must be a list of list of integers or scipy.stats distributions.")
+            raise AttributeError(
+                "parameters must be a list of list of integers or scipy.stats distributions."
+            )
         return output
 
 
