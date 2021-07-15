@@ -52,6 +52,7 @@ def _preprocess_data(data):
                 encoded[:, idx] = np.unique(v, return_inverse=True)[1]
     # stable sort sort the output by row
     encoded = np.unique(encoded, axis=0)
+    encoded = encoded.astype(np.float64)
 
     return encoded
 
