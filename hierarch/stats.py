@@ -665,8 +665,7 @@ def multi_sample_test(
         try:
             multiple_correction = MULTIPLE_COMPARISONS_CORRECTIONS[correction]
         except KeyError:
-            print(correction + " is not a valid multiple comparisons correction.")
-            raise
+            raise KeyError(correction + " is not a valid multiple comparisons correction.")
 
     random_state = np.random.default_rng(random_state)
 

@@ -98,7 +98,57 @@ class TestHypothesisTest(unittest.TestCase):
             hierarch.stats.hypothesis_test(self.data, 1)
         self.assertIn("No levels to bootstrap. Setting bootstraps to zero.", str(warning.warning))
 
+class TestMultiTest(unittest.TestCase):
+    import scipy.stats as stats
+    paramlist = [[0, 2, 4, 6], [stats.norm], [stats.norm]]
+    hierarchy = [4, 4, 3]
+    datagen = DataSimulator(paramlist, random_state=2)
+    datagen.fit(hierarchy)
+    data = datagen.generate()
 
+    def test_get_comparisons(self):
+        # check that all hypotheses are grabbed
+        test = hierarch.stats._get_comparisons(self.data, 0)
+        self.assertEqual(len(test), 6)
+
+        # check that every hypothesis is tested
+        out = hierarch.stats.multi_sample_test(self.data, 0).to_numpy()
+        self.assertEqual(len(out), 6)
+
+    def test_fdr_adjustment(self):
+        p_vals = np.arange(0.05, 1.05, step=0.1)
+        adjusted = hierarch.stats._false_discovery_adjust(p_vals)
+        standard = np.array([0.5, 0.75, 0.83333, 0.875, 0.9, 0.91667, 0.92857,
+           0.9375, 0.94444, 0.95])
+        for idx, v in enumerate(adjusted):
+            self.assertAlmostEqual(v, standard[idx])
+
+    def test_exceptions(self):
+        with self.assertRaises(KeyError) as raises:
+            hierarch.stats.multi_sample_test(self.data, 0, correction="ben")
+        self.assertIn("ben is not a valid multiple comparisons correction", str(raises.exception))
+
+        with self.assertRaises(TypeError) as raises:
+            hierarch.stats.multi_sample_test("hi", 0)
+        self.assertIn("Input data must be ndarray or DataFrame", str(raises.exception))
+
+
+class TestConfidenceInterval(unittest.TestCase):
+    paramlist = [[0, 2], [stats.norm], [stats.norm]]
+    hierarchy = [2, 4, 3]
+    datagen = DataSimulator(paramlist, random_state=2)
+    datagen.fit(hierarchy)
+    data = datagen.generate()
+
+    def test_conf(self):
+        interval_95 = hierarch.stats.confidence_interval(self.data, 0, interval=95)
+        self.assertEqual(len(interval_95), 2)
+        
+        interval_68 = hierarch.stats.confidence_interval(self.data, 0, interval=68)
+
+        # check that a 95% interval is wider than a 68% interval
+        self.assertLess(interval_95[0], interval_68[0])
+        self.assertGreater(interval_95[1], interval_68[1])
 
 if __name__ == "__main__":
     unittest.main()
