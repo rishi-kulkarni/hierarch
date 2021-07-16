@@ -52,6 +52,7 @@ def _preprocess_data(data):
                 encoded[:, idx] = np.unique(v, return_inverse=True)[1]
     # stable sort sort the output by row
     encoded = np.unique(encoded, axis=0)
+    encoded = encoded.astype(np.float64)
 
     return encoded
 
@@ -664,8 +665,7 @@ def multi_sample_test(
         try:
             multiple_correction = MULTIPLE_COMPARISONS_CORRECTIONS[correction]
         except KeyError:
-            print(correction + " is not a valid multiple comparisons correction.")
-            raise
+            raise KeyError(correction + " is not a valid multiple comparisons correction.")
 
     random_state = np.random.default_rng(random_state)
 
