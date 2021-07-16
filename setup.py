@@ -13,7 +13,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     license_files=("LICENSE.txt",),
     url="https://github.com/rishi-kulkarni/hierarch",
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(exclude=['tests']),
     install_requires=[
         "numpy>=1.20.2",
         "scipy>=1.6.2",
