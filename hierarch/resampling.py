@@ -215,7 +215,7 @@ class Bootstrapper:
         self.random_generator = np.random.default_rng(random_state)
         # this is a bit hacky, but we use the numpy generator to seed Numba
         # this makes it both reproducible and thread-safe enough
-        nb_seed = self.random_generator.integers(low=2 ** 32 - 1)
+        nb_seed = self.random_generator.integers(low=2**32 - 1)
         set_numba_random_state(nb_seed)
         if kind in self._BOOTSTRAP_ALGORITHMS:
             self.kind = kind
@@ -251,7 +251,8 @@ class Bootstrapper:
                     "Bootstrapper can only handle numeric datatypes. Please pre-process your data."
                 )
         except AttributeError:
-            raise AttributeError("Bootstrapper can only handle numpy arrays. Please pre-process your data."
+            raise AttributeError(
+                "Bootstrapper can only handle numpy arrays. Please pre-process your data."
             )
 
         if skip is not None:
@@ -301,47 +302,73 @@ class Bootstrapper:
         """
         raise Exception("Use fit() before using transform().")
 
+
 @lru_cache()
 def _bootstrapper_factory(columns_to_resample, clusternum_dict, shape, kind):
-    """Factory function that returns the appropriate transform().
-    """
-    clusternum_dict = tuple(map(np.array, clusternum_dict))
+    """Factory function that returns the appropriate transform()."""
+
+    # these helper functions wrap the distributions so that they take the same arguments
+    @jit(nopython=True)
+    def _multinomial_distribution(weights, idx, v):
+        return np.random.multinomial(v * weights[idx], [1 / v] * v)
+
+    @jit(nopython=True)
+    def _dirichlet_distribution(weights, idx, v):
+        return (
+            np.random.dirichlet([1 for a in range(v.item())], size=None)
+            * weights[idx]
+            * v.item()
+        )
+
+    @jit(nopython=True)
+    def _bootstrap_algorithm(data, start):
+        # at the start, everything is weighted equally
+        weights = np.array([1 for i in clusternum_dict[start]], dtype=_weight_dtype)
+
+        for key in range(start, shape):
+            # fetch design matrix info for current column
+            to_do = clusternum_dict[key]
+            # preallocate the full array for new_weight
+            new_weight = np.empty(to_do.sum(), _weight_dtype)
+            place = 0
+
+            # if not resampling this column, new_weight is the prior column's weights
+            if not columns_to_resample[key]:
+                for idx, v in enumerate(to_do):
+                    new_weight[place : place + v] = np.array(
+                        [weights[idx] for m in range(v.item())]
+                    )
+                    place += v
+
+            # else do a multinomial experiment to generate new_weight
+            else:
+                for idx, v in enumerate(to_do):
+                    # v*weights[idx] carries over weights from previous columns
+                    new_weight[place : place + v] = _dist(weights, idx, v)
+                    place += v
+
+            weights = new_weight
+
+        return weights
+
+    clusternum_dict = tuple(np.array(cluster) for cluster in clusternum_dict)
     columns_to_resample = np.array(columns_to_resample)
 
-    if kind == "weights":
+    if kind in ("weights", "indexes"):
+        _weight_dtype = np.int64
+        _dist = _multinomial_distribution
+
+    elif kind in ("bayesian"):
+        # bayesian bootstrap produces non-integer weights
+        _weight_dtype = np.float64
+        _dist = _dirichlet_distribution
+
+    if kind in ("weights", "bayesian"):
 
         @jit(nopython=True)
         def _bootstrapper_impl(data, start):
             out = data.astype(np.float64)
-            # at the start, everything is weighted equally
-            weights = np.array([1 for i in clusternum_dict[start]])
-
-            for key in range(start, shape):
-                # fetch design matrix info for current column
-                to_do = clusternum_dict[key]
-                # preallocate the full array for new_weight
-                new_weight = np.empty(to_do.sum(), np.int64)
-                place = 0
-
-                # if not resampling this column, new_weight is the prior column's weights
-                if not columns_to_resample[key]:
-                    for idx, v in enumerate(to_do):
-                        new_weight[place : place + v] = np.array(
-                            [weights[idx] for m in range(v.item())]
-                        )
-                        place += v
-
-                # else do a multinomial experiment to generate new_weight
-                else:
-                    for idx, v in enumerate(to_do):
-                        # v*weights[idx] carries over weights from previous columns
-                        new_weight[place : place + v] = np.random.multinomial(
-                            v * weights[idx], [1 / v] * v
-                        )
-                        place += v
-
-                weights = new_weight
-
+            weights = _bootstrap_algorithm(out, start)
             out[:, -1] = out[:, -1] * weights
             return out
 
@@ -350,82 +377,9 @@ def _bootstrapper_factory(columns_to_resample, clusternum_dict, shape, kind):
         @jit(nopython=True)
         def _bootstrapper_impl(data, start):
             out = data.astype(np.float64)
-            # at the start, everything is weighted equally
-            weights = np.array([1 for i in clusternum_dict[start]])
-
-            for key in range(start, shape):
-                # fetch design matrix info for current column
-                to_do = clusternum_dict[key]
-                # preallocate the full array for new_weight
-                new_weight = np.empty(to_do.sum(), np.int64)
-                place = 0
-
-                # if not resampling this column, new_weight is the prior column's weights
-                if not columns_to_resample[key]:
-                    for idx, v in enumerate(to_do):
-                        new_weight[place : place + v] = np.array(
-                            [weights[idx] for m in range(v.item())]
-                        )
-                        place += v
-
-                # else do a multinomial experiment to generate new_weight
-                else:
-                    for idx, v in enumerate(to_do):
-                        # v*weights[idx] carries over weights from previous columns
-                        new_weight[place : place + v] = np.random.multinomial(
-                            v * weights[idx], [1 / v] * v
-                        )
-                        place += v
-
-                weights = new_weight
-
+            weights = _bootstrap_algorithm(out, start)
             indexes = weights_to_index(weights)
             return out[indexes]
-
-    elif kind == "bayesian":
-
-        @jit(nopython=True)
-        def _bootstrapper_impl(data, start):
-            out = data.astype(np.float64)
-            # at the start, everything is weighted equally
-            # dype is float64 because weights can be any real number
-            weights = np.array(
-                [1 for i in clusternum_dict[start]], dtype=np.float64
-            )
-
-            for key in range(start, shape):
-                # fetch design matrix info for current column
-                to_do = clusternum_dict[key]
-                # preallocate the full array for new_weight
-                new_weight = np.empty(to_do.sum(), np.float64)
-                place = 0
-
-                # if not resampling this column, new_weight is all 1
-                if not columns_to_resample[key]:
-                    for idx, v in enumerate(to_do):
-                        new_weight[place : place + v] = np.array(
-                            [weights[idx] for m in range(v.item())],
-                            dtype=np.float64,
-                        )
-                        place += v
-
-                # else do a dirichlet experiment to generate new_weight
-                else:
-                    for idx, v in enumerate(to_do):
-                        # multiplying by weights[idx] carries over prior columns
-                        new_weight[place : place + v] = (
-                            np.random.dirichlet(
-                                [1 for a in range(v.item())], size=None
-                            )
-                            * weights[idx]
-                            * v.item()
-                        )
-                        place += v
-
-                weights = new_weight
-
-            out[:, -1] = out[:, -1] * weights
-            return out
 
     else:
         raise KeyError(
@@ -443,7 +397,7 @@ class Permuter:
     ----------
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
-        
+
     Examples
     --------
     When the column to resample is the first column, Permuter performs an
@@ -512,7 +466,7 @@ class Permuter:
 
     Exact within-cluster permutations are not implemented, but there are typically
     too many to be worth attempting.
-    
+
     >>> permute = Permuter(random_state=2)
     >>> permute.fit(test, col_to_permute=1, exact=True)
     Traceback (most recent call last):
@@ -523,7 +477,7 @@ class Permuter:
     def __init__(self, random_state=None):
         self.random_generator = np.random.default_rng(random_state)
         if random_state is not None:
-            nb_seed = self.random_generator.integers(low=2 ** 32)
+            nb_seed = self.random_generator.integers(low=2**32)
             set_numba_random_state(nb_seed)
 
     def fit(self, data, col_to_permute: int, exact=False):
@@ -601,15 +555,16 @@ class Permuter:
         # four static methods defined below
         raise Exception("Use fit() before using transform().")
 
+
 def _exact_return(col_to_permute, generator):
-    """Transformer when exact is True and permutations are unrestricted.
-    """
+    """Transformer when exact is True and permutations are unrestricted."""
 
     def _exact_return_impl(data):
         data[:, col_to_permute] = next(generator)
         return data
 
     return _exact_return_impl
+
 
 def _exact_repeat_return(col_to_permute, generator, counts):
     """Transformer when exact is True and permutations are restricted by
@@ -622,10 +577,10 @@ def _exact_repeat_return(col_to_permute, generator, counts):
 
     return _rep_iter_return_impl
 
+
 @lru_cache()
 def _random_return(col_to_permute, keys):
-    """Transformer when exact is False and repetition is not required.
-    """
+    """Transformer when exact is False and repetition is not required."""
 
     if col_to_permute == 0:
 
@@ -643,10 +598,10 @@ def _random_return(col_to_permute, keys):
 
     return _random_return_impl
 
+
 @lru_cache()
 def _random_repeat_return(col_to_permute, col_values, keys, counts):
-    """Transformer when exact is False and repetition is required.
-    """
+    """Transformer when exact is False and repetition is required."""
     col_values = np.array(col_values)
     counts = np.array(counts)
     if col_to_permute == 0:
@@ -668,4 +623,3 @@ def _random_repeat_return(col_to_permute, col_values, keys, counts):
             return data
 
     return _random_repeat_return_impl
-
