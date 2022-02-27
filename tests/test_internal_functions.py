@@ -14,7 +14,7 @@ class TestSetRandomState(unittest.TestCase):
         """
         Test normal behavior
         """
-        seeds = (1, 1000, 2 ** 32)
+        seeds = (1, 1000, 2**32)
         for seed in seeds:
             self._try_seed(seed)
 
@@ -34,7 +34,6 @@ class TestDataGrabber(unittest.TestCase):
         """
         Check lengths of grabbed samples.
         """
-        lengths = []
         for idx, key in enumerate(treatment_labels):
             self.assertEqual(ret[idx].size, (data[:, treatment_col] == key).sum())
 

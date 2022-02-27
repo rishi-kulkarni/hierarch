@@ -1,6 +1,6 @@
-hierarch.stats.preprocess\_data
+hierarch.stats.hypothesis\_test
 ===============================
 
 .. currentmodule:: hierarch.stats
 
-.. autofunction:: preprocess_data
+.. autofunction:: hypothesis_test

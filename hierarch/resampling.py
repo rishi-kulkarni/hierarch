@@ -1,15 +1,18 @@
-import numpy as np
-from itertools import cycle
-from numba import jit
 from functools import lru_cache
+from itertools import cycle
+from typing import Callable, Dict, Generator, Iterable, Union
+
+import numpy as np
+from numba import jit
+
 from hierarch.internal_functions import (
-    nb_unique,
+    _repeat,
     id_cluster_counts,
     msp,
-    set_numba_random_state,
-    _repeat,
     nb_fast_shuffle,
     nb_strat_shuffle,
+    nb_unique,
+    set_numba_random_state,
     weights_to_index,
 )
 
@@ -210,7 +213,11 @@ class Bootstrapper:
     # can be provided to the "kind" keyword argument.
     _BOOTSTRAP_ALGORITHMS = tuple(["weights", "indexes", "bayesian"])
 
-    def __init__(self, random_state=None, kind="weights"):
+    def __init__(
+        self,
+        random_state: Union[np.random.Generator, int, None] = None,
+        kind: str = "weights",
+    ) -> None:
 
         self.random_generator = np.random.default_rng(random_state)
         # this is a bit hacky, but we use the numpy generator to seed Numba
@@ -222,7 +229,7 @@ class Bootstrapper:
         else:
             raise KeyError("Invalid 'kind' argument.")
 
-    def fit(self, data, skip=None, y=-1):
+    def fit(self, data: np.ndarray, skip=None, y=-1) -> None:
         """Fit the bootstrapper to the target data.
 
         Parameters
@@ -283,7 +290,7 @@ class Bootstrapper:
             tuple(columns_to_resample), cluster_dict, shape, kind
         )
 
-    def transform(self, data, start: int):
+    def transform(self, data: np.ndarray, start: int) -> np.ndarray:
         """Generate a bootstrapped sample from target data.
 
         Parameters
@@ -304,7 +311,9 @@ class Bootstrapper:
 
 
 @lru_cache()
-def _bootstrapper_factory(columns_to_resample, clusternum_dict, shape, kind):
+def _bootstrapper_factory(
+    columns_to_resample: int, clusternum_dict: Dict, shape: int, kind: str
+) -> Callable:
     """Factory function that returns the appropriate transform()."""
 
     # these helper functions wrap the distributions so that they take the same arguments
@@ -474,13 +483,15 @@ class Permuter:
     NotImplementedError: Exact permutation only available for col_to_permute = 0.
     """
 
-    def __init__(self, random_state=None):
+    def __init__(
+        self, random_state: Union[np.random.Generator, int, None] = None
+    ) -> None:
         self.random_generator = np.random.default_rng(random_state)
         if random_state is not None:
             nb_seed = self.random_generator.integers(low=2**32)
             set_numba_random_state(nb_seed)
 
-    def fit(self, data, col_to_permute: int, exact=False):
+    def fit(self, data: np.ndarray, col_to_permute: int, exact: bool = False) -> None:
         """Fit the permuter to the target data.
 
         Parameters
@@ -537,7 +548,7 @@ class Permuter:
                     col_to_permute, col_values, keys, counts
                 )
 
-    def transform(self, data):
+    def transform(self, data: np.ndarray) -> np.ndarray:
         """Permute target column in-place.
 
         Parameters
@@ -556,7 +567,9 @@ class Permuter:
         raise Exception("Use fit() before using transform().")
 
 
-def _exact_return(col_to_permute, generator):
+def _exact_return(
+    col_to_permute: int, generator: Generator[Iterable, None, None]
+) -> Callable:
     """Transformer when exact is True and permutations are unrestricted."""
 
     def _exact_return_impl(data):
@@ -566,7 +579,9 @@ def _exact_return(col_to_permute, generator):
     return _exact_return_impl
 
 
-def _exact_repeat_return(col_to_permute, generator, counts):
+def _exact_repeat_return(
+    col_to_permute: int, generator: Generator[Iterable, None, None], counts: Iterable
+) -> Callable:
     """Transformer when exact is True and permutations are restricted by
     repetition of treated entities.
     """
@@ -579,7 +594,7 @@ def _exact_repeat_return(col_to_permute, generator, counts):
 
 
 @lru_cache()
-def _random_return(col_to_permute, keys):
+def _random_return(col_to_permute: int, keys: Iterable) -> Callable:
     """Transformer when exact is False and repetition is not required."""
 
     if col_to_permute == 0:
@@ -600,7 +615,9 @@ def _random_return(col_to_permute, keys):
 
 
 @lru_cache()
-def _random_repeat_return(col_to_permute, col_values, keys, counts):
+def _random_repeat_return(
+    col_to_permute: int, col_values: Iterable, keys: Iterable, counts: Iterable
+) -> Callable:
     """Transformer when exact is False and repetition is required."""
     col_values = np.array(col_values)
     counts = np.array(counts)
