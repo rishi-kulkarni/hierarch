@@ -1,9 +1,7 @@
-from symbol import parameters
 import unittest
 import hierarch.power
 import scipy.stats as stats
 import numpy as np
-import pandas as pd
 
 
 class TestDataSimulator(unittest.TestCase):
