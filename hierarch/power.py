@@ -1,5 +1,4 @@
 import numpy as np
-import scipy.stats as stats
 
 
 class DataSimulator:
@@ -66,7 +65,6 @@ class DataSimulator:
                [2., 3., 1., 0.],
                [2., 3., 2., 0.],
                [2., 3., 3., 0.]])
-        
 
         """
 
