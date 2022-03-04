@@ -1,5 +1,3 @@
-
-
 import numba as nb
 import numpy as np
 
@@ -225,6 +223,8 @@ def nb_strat_shuffle(arr, stratification):
 
 
 nb.jit(nopython=True, cache=True)
+
+
 def weights_to_index(weights):
     """Converts a 1D array of integer weights to indices.
 
