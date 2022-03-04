@@ -1,7 +1,9 @@
-import numpy as np
-from hierarch import numba_overloads
+
+
 import numba as nb
-import pandas as pd
+import numpy as np
+
+from hierarch import numba_overloads
 
 assert numba_overloads
 
@@ -177,7 +179,7 @@ def bounded_uint(ub):
     -------
     int
     """
-    x = np.random.randint(low=2 ** 32)
+    x = np.random.randint(low=2**32)
     m = ub * x
     l = np.uint32(m)
     if l < ub:
@@ -187,7 +189,7 @@ def bounded_uint(ub):
             if t >= ub:
                 t %= ub
         while l < t:
-            x = np.random.randint(low=2 ** 32)
+            x = np.random.randint(low=2**32)
             m = ub * x
             l = np.uint32(m)
     return m >> 32
@@ -195,8 +197,7 @@ def bounded_uint(ub):
 
 @nb.jit(nopython=True, cache=True)
 def nb_fast_shuffle(arr):
-    """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers.
-    """
+    """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers."""
     i = arr.shape[0] - 1
     while i > 0:
         j = bounded_uint(i + 1)
@@ -223,35 +224,7 @@ def nb_strat_shuffle(arr, stratification):
             i -= 1
 
 
-@nb.jit(nopython=True, cache=True)
-def id_cluster_counts(design):
-    """Identifies the hierarchy in a design matrix.
-
-    Constructs a Typed Dictionary from a tuple of arrays corresponding
-    to number of values described by each cluster in a design matrix.
-    This assumes that the design matrix is lexicographically sorted.
-
-    Parameters
-    ----------
-    design : 2D numeric ndarray
-
-    Returns
-    -------
-    TypedDict
-        Each key corresponds to a column index and each value is the number
-        of subclusters in each cluster in that column.
-    """
-    cluster_dict = {}
-    to_analyze = design
-    for i in range(to_analyze.shape[1] - 1, -1, -1):
-        # equivalent to np.unique(to_analyze[:,:-1],
-        # return_counts=True, axis=0)
-        to_analyze, counts = nb_unique(to_analyze[:, :-1])[0::2]
-        cluster_dict[i] = counts
-    return cluster_dict
-
-
-@nb.jit(nopython=True, cache=True)
+nb.jit(nopython=True, cache=True)
 def weights_to_index(weights):
     """Converts a 1D array of integer weights to indices.
 
@@ -417,8 +390,7 @@ class GroupbyMean:
         return target
 
     def fit_transform(self, target, reference_data=None, iterations=1):
-        """Combines fit() and transform() for convenience. See those methods for details.
-        """
+        """Combines fit() and transform() for convenience. See those methods for details."""
         if reference_data is None:
             reference_data = target
         self.fit(reference_data)
@@ -462,4 +434,3 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
-

@@ -159,24 +159,6 @@ class TestFastShuffle(unittest.TestCase):
             self.assertEqual(shuffled[10:].sum(), 0)
 
 
-class TestIDClusters(unittest.TestCase):
-    def test_id_clusters(self):
-        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [2, 3, [10, 11, 5, 6, 4, 3]])
-        parameters = [[stats.norm, 0, 0], [stats.norm, 0, 0], [stats.norm, 0, 0]]
-        sim = DataSimulator(parameters)
-
-        for hierarchy in hierarchies:
-            sim.fit(hierarchy)
-            ret = internal_functions.id_cluster_counts(sim.container[:, :-1])
-            for idx, level in enumerate(reversed(list(ret.values()))):
-                if isinstance(hierarchy[idx], int):
-                    for v in iter(level):
-                        self.assertEqual(v, hierarchy[idx])
-                elif isinstance(hierarchy[idx], list):
-                    for idx_2, v in enumerate(level):
-                        self.assertEqual(hierarchy[idx][idx_2], v)
-
-
 class TestWeightstoIndex(unittest.TestCase):
     def test_weights_to_index(self):
         """

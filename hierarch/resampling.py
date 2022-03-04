@@ -1,13 +1,13 @@
+from collections import deque
 from functools import lru_cache
 from itertools import cycle
-from typing import Callable, Dict, Generator, Iterable, Union
+from typing import Callable, Dict, Generator, Iterable, Tuple, Union
 
 import numpy as np
 from numba import jit
 
 from hierarch.internal_functions import (
     _repeat,
-    id_cluster_counts,
     msp,
     nb_fast_shuffle,
     nb_strat_shuffle,
@@ -15,6 +15,78 @@ from hierarch.internal_functions import (
     set_numba_random_state,
     weights_to_index,
 )
+
+
+def _id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
+    """Identifies the hierarchy in a design matrix.
+
+    Constructs a tuple of arrays corresponding describing the hierarchy
+    in a design matrix. This presumes that the design matrix is organized
+    hierarchically from left to right.
+
+    Parameters
+    ----------
+    design : 2D numeric ndarray
+
+    Returns
+    -------
+    Tuple
+        Each index corresponds to a column index in the design matrix
+        and each value is the number cluster in that column. Subclusters
+        are expressed separately.
+
+    Examples
+    --------
+    Consider a simple design matrix that has one y-value per
+    x-value and no nesting:
+
+    >>> design = np.array([1, 2, 3, 4, 5])[:, None]
+    >>> design.shape
+    (5, 1)
+
+    >>> id_cluster_counts(design)
+    ((5,), (1, 1, 1, 1, 1))
+
+    This reflects the words we used to describe the matrix - there are 5 x-values,
+    each of which corresponds to a single y-value. This approach can describe
+    design matrices of any level of hierarchy:
+
+    >>> design = np.array([[1, 1],
+    ...                    [1, 2],
+    ...                    [1, 3],
+    ...                    [2, 4],
+    ...                    [2, 5],
+    ...                    [2, 5]])
+    >>> design.shape
+    (6, 2)
+
+    This matrix has two first-level x-values, the first of which contains three
+    second-level x-values and the second of which contains two second-level x-values.
+    Finally, each second-level x-value corresponds to a single y-value, except for 5,
+    which corresponds to two y-values.
+
+    id_cluster_counts returns this description:
+
+    >>> id_cluster_counts(design)
+    ((2,), (3, 2), (1, 1, 1, 1, 2))
+
+    """
+    # deque is nice because we're traversing the hierarchy backwards
+    cluster_desc = deque()
+
+    # the number of clusters in the y-values is just the counts
+    # from np.uniques of the design matrix
+    prior_uniques, final_counts = np.unique(design, axis=0, return_counts=True)
+    cluster_desc.appendleft(tuple(final_counts))
+
+    # get the number of clusters in each column of the design matrix
+    for i in range(design.shape[1]):
+        prior_uniques, counts = np.unique(
+            prior_uniques[:, :-1], axis=0, return_counts=True
+        )
+        cluster_desc.appendleft(tuple(counts))
+    # return a tuple because it plays nicer with numba
+    return tuple(cluster_desc)
 
 
 class Bootstrapper:
@@ -274,9 +346,7 @@ class Bootstrapper:
         else:
             skip = []
 
-        cluster_dict = id_cluster_counts(data[:, :y])
-        cluster_dict = tuple(reversed(list(cluster_dict.values())))
-        cluster_dict = tuple(map(tuple, cluster_dict))
+        cluster_desc = _id_cluster_counts(data[:, : y - 1])
         y %= data.shape[1]
         shape = y
 
@@ -287,7 +357,7 @@ class Bootstrapper:
         kind = str(self.kind)
 
         self.transform = _bootstrapper_factory(
-            tuple(columns_to_resample), cluster_dict, shape, kind
+            tuple(columns_to_resample), cluster_desc, shape, kind
         )
 
     def transform(self, data: np.ndarray, start: int) -> np.ndarray:

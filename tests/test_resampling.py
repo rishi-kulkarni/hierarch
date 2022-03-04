@@ -1,9 +1,27 @@
 import unittest
-import hierarch.resampling
+import hierarch.resampling as resampling
 from hierarch.power import DataSimulator
 import scipy.stats as stats
 import numpy as np
 import pandas as pd
+
+
+class TestIDClusters(unittest.TestCase):
+    def test_id_clusters(self):
+        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [2, 3, [10, 11, 5, 6, 4, 3]])
+        parameters = [[stats.norm, 0, 0], [stats.norm, 0, 0], [stats.norm, 0, 0]]
+        sim = DataSimulator(parameters)
+
+        for hierarchy in hierarchies:
+            sim.fit(hierarchy)
+            ret = resampling._id_cluster_counts(sim.container[:, :-2])
+            for idx, level in enumerate(ret):
+                if isinstance(hierarchy[idx], int):
+                    for v in iter(level):
+                        self.assertEqual(v, hierarchy[idx])
+                elif isinstance(hierarchy[idx], list):
+                    for idx_2, v in enumerate(level):
+                        self.assertEqual(hierarchy[idx][idx_2], v)
 
 
 class TestBootstrapper(unittest.TestCase):
@@ -16,11 +34,11 @@ class TestBootstrapper(unittest.TestCase):
         Tests that setting the random_state generates the same bootstrapped sample.
         """
 
-        boot = hierarch.resampling.Bootstrapper(random_state=1, kind="weights")
+        boot = resampling.Bootstrapper(random_state=1, kind="weights")
         boot.fit(self.data_1)
         test_1 = boot.transform(self.data_1, start=0)
 
-        boot = hierarch.resampling.Bootstrapper(random_state=1, kind="weights")
+        boot = resampling.Bootstrapper(random_state=1, kind="weights")
         boot.fit(self.data_1)
         test_2 = boot.transform(self.data_1, start=0)
 
@@ -32,7 +50,7 @@ class TestBootstrapper(unittest.TestCase):
         Tests the Efron bootstrap "contract" - the final weights should sum
         to the sum of the original weights within each column.
         """
-        boot = hierarch.resampling.Bootstrapper(kind="weights")
+        boot = resampling.Bootstrapper(kind="weights")
         boot.fit(self.data_1)
         self.data_1[:, -1] = 1
         starts = (0, 1, 2)
@@ -45,7 +63,7 @@ class TestBootstrapper(unittest.TestCase):
         Tests the Efron bootstrap "contract" - the final weights should sum
         to the sum of the original weights within each column.
         """
-        boot = hierarch.resampling.Bootstrapper(kind="bayesian")
+        boot = resampling.Bootstrapper(kind="bayesian")
         boot.fit(self.data_1)
         self.data_1[:, -1] = 1
         starts = (0, 1, 2)
@@ -55,10 +73,10 @@ class TestBootstrapper(unittest.TestCase):
 
     def test_bootstrapper_exceptions(self):
         with self.assertRaises(KeyError) as raises:
-            boot = hierarch.resampling.Bootstrapper(kind="blah")
+            boot = resampling.Bootstrapper(kind="blah")
         self.assertIn("Invalid 'kind' argument.", str(raises.exception))
 
-        boot = hierarch.resampling.Bootstrapper(kind="weights")
+        boot = resampling.Bootstrapper(kind="weights")
         with self.assertRaises(ValueError) as raises:
             boot.fit(np.array(["str"]))
         self.assertIn(
@@ -99,11 +117,11 @@ class TestPermuter(unittest.TestCase):
         shuf_1 = self.orig_data.copy()
         shuf_2 = self.orig_data.copy()
 
-        permuter = hierarch.resampling.Permuter(random_state=1)
+        permuter = resampling.Permuter(random_state=1)
         permuter.fit(shuf_1, 0, exact=False)
         permuter.transform(shuf_1)
 
-        permuter = hierarch.resampling.Permuter(random_state=1)
+        permuter = resampling.Permuter(random_state=1)
         permuter.fit(shuf_2, 0, exact=False)
         permuter.transform(shuf_2)
 
@@ -124,11 +142,11 @@ class TestPermuter(unittest.TestCase):
         shuf_1 = self.orig_data.copy()
         shuf_2 = self.orig_data.copy()
 
-        permuter = hierarch.resampling.Permuter()
+        permuter = resampling.Permuter()
         permuter.fit(shuf_1, 0, exact=True)
         permuter.transform(shuf_1)
 
-        permuter = hierarch.resampling.Permuter()
+        permuter = resampling.Permuter()
         permuter.fit(shuf_2, 0, exact=True)
         permuter.transform(shuf_2)
 
@@ -143,7 +161,7 @@ class TestPermuter(unittest.TestCase):
                 self.assertEqual(v, self.orig_data[:, 0][idx])
 
     def test_permuter_exceptions(self):
-        permuter = hierarch.resampling.Permuter()
+        permuter = resampling.Permuter()
         with self.assertRaises(Exception) as raises:
             permuter.transform(self.orig_data)
         self.assertIn("Use fit() before using transform().", str(raises.exception))
