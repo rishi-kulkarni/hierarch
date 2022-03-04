@@ -62,7 +62,7 @@ def studentized_covariance(x, y):
     """Studentized sample covariance between two variables.
 
     Sample covariance between two variables divided by standard error of
-    sample covariance. Uses a bias-corrected approximation of standard error. 
+    sample covariance. Uses a bias-corrected approximation of standard error.
     This computes an approximately pivotal test statistic.
 
     Parameters
@@ -76,7 +76,7 @@ def studentized_covariance(x, y):
 
     Examples
     --------
-    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1], 
+    >>> x = np.array([[0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
     ...               [1, 2, 3, 4, 5, 2, 3, 4, 5, 6]])
     >>> x.T
     array([[0, 1],
@@ -94,7 +94,7 @@ def studentized_covariance(x, y):
 
     This is approximately equal to the t-statistic.
 
-    >>> import scipy.stats as stats    
+    >>> import scipy.stats as stats
     >>> a = np.array([2, 3, 4, 5, 6])
     >>> b = np.array([1, 2, 3, 4, 5])
     >>> stats.ttest_ind(a, b, equal_var=False)[0]
@@ -111,7 +111,7 @@ def studentized_covariance(x, y):
 
     # first term is the second symmetric bivariate central moment. an approximate
     # bias correction of n - root(2) is applied
-    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2 ** 0.5)
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2**0.5)
 
     # second term is the product of the standard deviations of x and y over n - 1.
     # this term rapidly goes to 0 as n goes to infinity
@@ -166,8 +166,8 @@ def welch_statistic(sample_a, sample_b):
     >>> b = np.array([10, 11, 12, 13, 14])
     >>> stats.ttest_ind(a, b, equal_var=False)[0]
     -9.0
-    
-    
+
+
     Notes
     ----------
     Details on the validity of this test statistic can be found in
@@ -202,7 +202,7 @@ def _test_stat_factory(treatment_col, compare):
         Treatment column in the design matrix. Needs to be a tuple
         so lru_cache can work.
     compare : {'means', 'corr'}
-        Specifies test statistic to return. 
+        Specifies test statistic to return.
 
     Returns
     -------
@@ -293,7 +293,7 @@ def hypothesis_test(
         p-value for the hypothesis test
 
     list
-        Empirical null distribution used to calculate the p-value        
+        Empirical null distribution used to calculate the p-value
 
     Raises
     ------
@@ -324,8 +324,8 @@ def hypothesis_test(
     0.013714285714285714
 
     By setting compare to "means", this function will perform a permutation t-test.
-    "corr", which is based on a studentized covariance test statistic, should give the 
-    same or a very similar p-value to the permutation t-test for datasets with two 
+    "corr", which is based on a studentized covariance test statistic, should give the
+    same or a very similar p-value to the permutation t-test for datasets with two
     treatment groups.
 
     >>> hypothesis_test(data, treatment_col=0, compare='means',
@@ -333,9 +333,9 @@ def hypothesis_test(
     ...                 random_state=1)
     0.013714285714285714
 
-    This test can handle data with multiple treatment groups that have a 
+    This test can handle data with multiple treatment groups that have a
     hypothesized linear relationship.
-    
+
     >>> paramlist = [[0, 2/3, 4/3, 2], [stats.norm], [stats.norm]]
     >>> hierarchy = [4, 2, 3]
     >>> datagen = DataSimulator(paramlist, random_state=2)
@@ -344,7 +344,7 @@ def hypothesis_test(
     >>> print(data.shape)
     (24, 4)
 
-    There are 2,520 possible permutations, so choose a subset. 
+    There are 2,520 possible permutations, so choose a subset.
 
     >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
@@ -388,7 +388,8 @@ def hypothesis_test(
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip=skip)
 
-    # fetch test statistic from dictionary or, if given a custom test statistic, make sure it is callable
+    # fetch test statistic from dictionary or, if given a
+    # custom test statistic, make sure it is callable
     if isinstance(compare, str):
         teststat = _test_stat_factory(tuple(data[:, treatment_col].tolist()), compare)
     elif callable(compare):
@@ -544,8 +545,9 @@ def multi_sample_test(
     Returns
     -------
     ndarray
-        numpy ndarray with col 0, 1 corresponding to treatment labels, col 2 corresponding to an uncorrected p-value,
-        and col 3 corresponding to a corrected p-value if a correction was specified.
+        numpy ndarray with col 0, 1 corresponding to treatment labels, col 2 corresponding
+        to an uncorrected p-value, and col 3 corresponding to a corrected p-value if a correction
+         was specified.
 
     Raises
     ------
@@ -613,8 +615,8 @@ def multi_sample_test(
            [ 4.        ,  3.        ,  2.        ,  0.58229922],
            [ 4.        ,  3.        ,  3.        ,  0.04042133]])
 
-    There are six total comparisons that can be made. Condition 1 and 2 are in the first two columns and the p-values are in the
-    final column.
+    There are six total comparisons that can be made. Condition 1 and 2 are in the first
+    two columns and the p-values are in the final column.
 
     >>> multi_sample_test(data, treatment_col=0, hypotheses="all",
     ...                   correction=None, bootstraps=1000,
@@ -641,7 +643,7 @@ def multi_sample_test(
     3         2.0         4.0  0.1477           0.22155
     4         1.0         2.0  0.4022            0.4559
     5         1.0         4.0  0.4559            0.4559
-    
+
     Perhaps the experimenter is not interested in every pairwise comparison - perhaps
     condition 2 is a control that all other conditions are meant to be compared to.
     The comparisons of interest can be specified using a list.
@@ -665,7 +667,9 @@ def multi_sample_test(
         try:
             multiple_correction = MULTIPLE_COMPARISONS_CORRECTIONS[correction]
         except KeyError:
-            raise KeyError(correction + " is not a valid multiple comparisons correction.")
+            raise KeyError(
+                correction + " is not a valid multiple comparisons correction."
+            )
 
     random_state = np.random.default_rng(random_state)
 
@@ -887,7 +891,7 @@ def confidence_interval(
     tolerance : float, optional
         If the delta between the current bounds and the target interval is less than
         this value, refinement will stop. Setting this number too close to the Monte Carlo
-        error of the underlying hypothesis test will have a negative effect on coverage. 
+        error of the underlying hypothesis test will have a negative effect on coverage.
     compare : str, optional
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
@@ -916,7 +920,7 @@ def confidence_interval(
     using the Bayesian bootstrap here helps get tighter confidence intervals with the
     correct coverage without having to massively increase the number of resamples.
 
-    The inversion procedure performed by this function is described in detail in 
+    The inversion procedure performed by this function is described in detail in
     "Randomization, Bootstrap and Monte Carlo Methods in Biology" by Bryan FJ Manly.
     https://doi.org/10.1201/9781315273075.
 
@@ -934,7 +938,7 @@ def confidence_interval(
     >>> print(data.shape)
     (24, 4)
 
-    >>> confidence_interval(data, treatment_col=0, interval=95, 
+    >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    bootstraps=1000, permutations='all', random_state=1)
     (1.314807450602109, 6.124658302189696)
 
@@ -950,7 +954,7 @@ def confidence_interval(
     This suggests that while the 95% confidence interval does not contain 0, the 99.5%
     confidence interval should.
 
-    >>> confidence_interval(data, treatment_col=0, interval=99.5, 
+    >>> confidence_interval(data, treatment_col=0, interval=99.5,
     ...    bootstraps=1000, permutations='all', random_state=1)
     (-0.12320618535452432, 7.56267193814634)
 
@@ -958,13 +962,13 @@ def confidence_interval(
     specifying compare = "means". This should return the same or a very
     similar interval.
 
-    >>> confidence_interval(data, treatment_col=0, interval=95, 
-    ...    compare='means', bootstraps=1000, 
+    >>> confidence_interval(data, treatment_col=0, interval=95,
+    ...    compare='means', bootstraps=1000,
     ...    permutations='all', random_state=1)
     (1.314807450602109, 6.124658302189696)
 
     Setting compare = "corr" will generate a confidence interval for the slope
-    in a regression equation.     
+    in a regression equation.
 
     >>> paramlist = [[0, 1, 2, 3], [stats.norm], [stats.norm]]
     >>> hierarchy = [4, 4, 3]
@@ -1008,7 +1012,8 @@ def confidence_interval(
     correction = start_slope * null_imposed_data[:, treatment_col]
     null_imposed_data[:, -1] -= correction
 
-    # compute the null distribution for the null hypothesis that the true effect size is equal to the MLE
+    # compute the null distribution for the null hypothesis that the true effect size
+    # is equal to the MLE
     _, null = hypothesis_test(
         null_imposed_data,
         treatment_col,
@@ -1154,7 +1159,7 @@ def _compute_interval(null, null_data, treatment_col, quantile):
     >>> _compute_interval(null, data, 0, 0.025)
     -1.6381035977603908
 
-    The test statistic distribution is essentially symmetric about 0. 
+    The test statistic distribution is essentially symmetric about 0.
 
     >>> _compute_interval(null, data, 0, 0.975)
     1.6560744165754229
@@ -1205,7 +1210,7 @@ def _cov_std_error(x, y):
     n = len(x)
     # first term is the second symmetric bivariate central moment. an approximate
     # bias correction of n - root(2) is applied
-    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2 ** 0.5)
+    denom_1 = bivar_central_moment(x, y, pow=2, ddof=2**0.5)
 
     # second term is the product of the standard deviations of x and y over n - 1.
     # this term rapidly goes to 0 as n goes to infinity
