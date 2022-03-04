@@ -68,7 +68,8 @@ class TestHypothesisTest(unittest.TestCase):
     def test_corr_vs_means(self):
         # check exact test
         corr_p = hierarch.stats.hypothesis_test(
-            self.data,
+            self.data[:, :-2],
+            self.data[:, -1],
             treatment_col=0,
             compare="corr",
             bootstraps=1000,
@@ -76,7 +77,8 @@ class TestHypothesisTest(unittest.TestCase):
             random_state=1,
         )
         t_p = hierarch.stats.hypothesis_test(
-            self.data,
+            self.data[:, :-2],
+            self.data[:, -1],
             treatment_col=0,
             compare="means",
             bootstraps=1000,
@@ -87,7 +89,8 @@ class TestHypothesisTest(unittest.TestCase):
 
         # check approximate test
         corr_p = hierarch.stats.hypothesis_test(
-            self.data,
+            self.data[:, :-2],
+            self.data[:, -1],
             treatment_col=0,
             compare="corr",
             bootstraps=1000,
@@ -95,7 +98,8 @@ class TestHypothesisTest(unittest.TestCase):
             random_state=1,
         )
         t_p = hierarch.stats.hypothesis_test(
-            self.data,
+            self.data[:, :-2],
+            self.data[:, -1],
             treatment_col=0,
             compare="means",
             bootstraps=1000,

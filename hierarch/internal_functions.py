@@ -225,29 +225,6 @@ def nb_strat_shuffle(arr, stratification):
 nb.jit(nopython=True, cache=True)
 
 
-def weights_to_index(weights):
-    """Converts a 1D array of integer weights to indices.
-
-    Equivalent to np.array(list(range(n))).repeat(weights).
-
-    Parameters
-    ----------
-    weights : array-like of ints
-
-    Returns
-    -------
-    indexes: array-like of ints
-    """
-
-    indexes = np.empty(weights.sum(), dtype=np.int64)
-    spot = 0
-    for i, v in enumerate(weights):
-        for j in range(v):
-            indexes[spot] = i
-            spot += 1
-    return indexes
-
-
 def msp(items):
     """Yield the permutations of `items`
 

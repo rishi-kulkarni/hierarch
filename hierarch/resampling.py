@@ -1,7 +1,7 @@
 from collections import deque
 from functools import lru_cache
 from itertools import cycle
-from typing import Callable, Dict, Generator, Iterable, Tuple, Union
+from typing import Callable, Generator, Iterable, Tuple, Union
 
 import numpy as np
 from numba import jit
@@ -13,7 +13,6 @@ from hierarch.internal_functions import (
     nb_strat_shuffle,
     nb_unique,
     set_numba_random_state,
-    weights_to_index,
 )
 
 
@@ -287,21 +286,25 @@ class Bootstrapper:
 
     def __init__(
         self,
-        random_state: Union[np.random.Generator, int, None] = None,
+        n_resamples,
+        *,
         kind: str = "weights",
+        random_state: Union[np.random.Generator, int, None] = None,
     ) -> None:
 
-        self.random_generator = np.random.default_rng(random_state)
+        self._n_resamples = n_resamples
+
+        self._random_generator = np.random.default_rng(random_state)
         # this is a bit hacky, but we use the numpy generator to seed Numba
         # this makes it both reproducible and thread-safe enough
-        nb_seed = self.random_generator.integers(low=2**32 - 1)
+        nb_seed = self._random_generator.integers(low=2**32 - 1)
         set_numba_random_state(nb_seed)
         if kind in self._BOOTSTRAP_ALGORITHMS:
-            self.kind = kind
+            self._kind = kind
         else:
             raise KeyError("Invalid 'kind' argument.")
 
-    def fit(self, data: np.ndarray, skip=None, y=-1) -> None:
+    def resample(self, X: np.ndarray, y=None, start_col=0, skip=None) -> None:
         """Fit the bootstrapper to the target data.
 
         Parameters
@@ -312,7 +315,7 @@ class Bootstrapper:
             Set to false is data is already sorted by row, by default True.
         skip : list of integers, optional
             Columns to skip in the bootstrap. Skip columns that were sampled
-            without replacement from the prior column, by default [].
+            without replacement from the prior column, by default None.
         y : int, optional
             column index of the dependent variable, by default -1
 
@@ -325,7 +328,7 @@ class Bootstrapper:
 
         """
         try:
-            if not np.issubdtype(data.dtype, np.number):
+            if not np.issubdtype(X.dtype, np.number):
                 raise ValueError(
                     "Bootstrapper can only handle numeric datatypes. Please pre-process your data."
                 )
@@ -341,48 +344,37 @@ class Bootstrapper:
                     raise IndexError(
                         "skip values must be integers corresponding to column indices."
                     )
-                if v >= data.shape[1] - 1:
+                if v >= X.shape[1] - 1:
                     raise IndexError("skip index out of bounds for this array.")
         else:
             skip = []
 
-        cluster_desc = _id_cluster_counts(data[:, : y - 1])
-        y %= data.shape[1]
-        shape = y
+        cluster_desc = _id_cluster_counts(X)
 
-        columns_to_resample = np.array([True for k in range(shape)])
+        columns_to_resample = np.array([True for k in range(X.shape[1])])
         for key in skip:
             columns_to_resample[key] = False
 
-        kind = str(self.kind)
-
-        self.transform = _bootstrapper_factory(
-            tuple(columns_to_resample), cluster_desc, shape, kind
+        transform = _bootstrapper_factory(
+            tuple(columns_to_resample), cluster_desc, X.shape[1], self._kind
         )
 
-    def transform(self, data: np.ndarray, start: int) -> np.ndarray:
-        """Generate a bootstrapped sample from target data.
-
-        Parameters
-        ----------
-        data : 2D array
-            Target data. Must be sorted by row.
-        start : int
-            Column index of the first column to be bootstrapped.
-
-        Returns
-        -------
-        2D array
-            Array matching target data, but resampled with replacement
-            according to "kind" argument.
-
-        """
-        raise Exception("Use fit() before using transform().")
+        if y is None:
+            for i in range(self._n_resamples):
+                yield transform(X, start_col)
+        elif self._kind == "indexes":
+            for i in range(self._n_resamples):
+                idx_resampled = transform(X, start_col)
+                yield X[idx_resampled], y[idx_resampled]
+        elif self._kind in ("weights", "bayesian"):
+            for i in range(self._n_resamples):
+                weights = transform(X, start_col)
+                yield X, y * weights
 
 
 @lru_cache()
 def _bootstrapper_factory(
-    columns_to_resample: int, clusternum_dict: Dict, shape: int, kind: str
+    columns_to_resample: int, clusternum_dict: Tuple[Tuple[int]], shape: int, kind: str
 ) -> Callable:
     """Factory function that returns the appropriate transform()."""
 
@@ -400,12 +392,11 @@ def _bootstrapper_factory(
         )
 
     @jit(nopython=True)
-    def _bootstrap_algorithm(data, start):
+    def _bootstrap_algorithm(X, start):
         # at the start, everything is weighted equally
         weights = np.array([1 for i in clusternum_dict[start]], dtype=_weight_dtype)
 
-        for key in range(start, shape):
-            # fetch design matrix info for current column
+        for key in range(start, len(clusternum_dict)):
             to_do = clusternum_dict[key]
             # preallocate the full array for new_weight
             new_weight = np.empty(to_do.sum(), _weight_dtype)
@@ -445,20 +436,17 @@ def _bootstrapper_factory(
     if kind in ("weights", "bayesian"):
 
         @jit(nopython=True)
-        def _bootstrapper_impl(data, start):
-            out = data.astype(np.float64)
-            weights = _bootstrap_algorithm(out, start)
-            out[:, -1] = out[:, -1] * weights
-            return out
+        def _bootstrapper_impl(X, start):
+            weights = _bootstrap_algorithm(X, start)
+            return weights
 
     elif kind == "indexes":
 
         @jit(nopython=True)
-        def _bootstrapper_impl(data, start):
-            out = data.astype(np.float64)
-            weights = _bootstrap_algorithm(out, start)
-            indexes = weights_to_index(weights)
-            return out[indexes]
+        def _bootstrapper_impl(X, start):
+            weights = _bootstrap_algorithm(X, start)
+            indexes = _weights_to_index(weights)
+            return indexes
 
     else:
         raise KeyError(
@@ -466,6 +454,30 @@ def _bootstrapper_factory(
         )
 
     return _bootstrapper_impl
+
+
+@jit(nopython=True)
+def _weights_to_index(weights):
+    """Converts a 1D array of integer weights to indices.
+
+    Equivalent to np.array(list(range(n))).repeat(weights).
+
+    Parameters
+    ----------
+    weights : array-like of ints
+
+    Returns
+    -------
+    indexes: array-like of ints
+    """
+
+    indexes = np.empty(weights.sum(), dtype=np.int64)
+    spot = 0
+    for i, v in enumerate(weights):
+        for j in range(v):
+            indexes[spot] = i
+            spot += 1
+    return indexes
 
 
 class Permuter:

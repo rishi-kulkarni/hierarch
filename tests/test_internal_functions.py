@@ -159,18 +159,6 @@ class TestFastShuffle(unittest.TestCase):
             self.assertEqual(shuffled[10:].sum(), 0)
 
 
-class TestWeightstoIndex(unittest.TestCase):
-    def test_weights_to_index(self):
-        """
-        Tests that weights_to_index gives same array as np.arange(weights.size).repeat(weights)
-        """
-        weights = np.random.randint(10, size=10)
-        indexes = internal_functions.weights_to_index(weights)
-        np_indexes = np.arange(weights.size).repeat(weights)
-        for idx, v in enumerate(indexes):
-            self.assertEqual(v, np_indexes[idx])
-
-
 class TestMultisetPermutations(unittest.TestCase):
     def test_msp(self):
         """

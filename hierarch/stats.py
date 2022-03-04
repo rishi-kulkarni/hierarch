@@ -1,3 +1,4 @@
+from os import X_OK
 import numpy as np
 from numba import jit
 import math
@@ -12,7 +13,7 @@ from warnings import warn, simplefilter
 from functools import lru_cache
 
 
-def _preprocess_data(data):
+def _preprocess_data(X, y):
     """Performs label encoding without overwriting numerical variables.
 
     Parameters
@@ -27,14 +28,14 @@ def _preprocess_data(data):
         to np.float64s replaced with integer values.
     """
     # don't want to overwrite data
-    if isinstance(data, np.ndarray):
+    if isinstance(X, np.ndarray):
 
-        encoded = data.copy()
+        encoded = X.copy()
 
     # coerce dataframe to numpy array
-    elif isinstance(data, pd.DataFrame):
+    elif isinstance(X, pd.DataFrame):
 
-        encoded = data.to_numpy()
+        encoded = X.to_numpy()
 
     for idx, v in enumerate(encoded.T):
         # attempt to cast array as floats
@@ -51,10 +52,12 @@ def _preprocess_data(data):
             except ValueError:
                 encoded[:, idx] = np.unique(v, return_inverse=True)[1]
     # stable sort sort the output by row
-    encoded = np.unique(encoded, axis=0)
-    encoded = encoded.astype(np.float64)
+    sorted_idx = np.lexsort(np.rot90(encoded))
 
-    return encoded
+    encoded_X = encoded[sorted_idx].astype(np.float64)
+    y = y[sorted_idx]
+
+    return encoded_X, y
 
 
 @jit(nopython=True, cache=True)
@@ -240,7 +243,8 @@ def _grabber(X, y, treatment_labels):
 
 
 def hypothesis_test(
-    data_array,
+    X,
+    y,
     treatment_col,
     compare="corr",
     alternative="two-sided",
@@ -355,10 +359,11 @@ def hypothesis_test(
     """
 
     # turns the input array or dataframe into a float64 array
-    if isinstance(data_array, (np.ndarray, pd.DataFrame)):
-        if isinstance(data_array, pd.DataFrame) and isinstance(treatment_col, str):
-            treatment_col = int(data_array.columns.get_loc(treatment_col))
-        data = _preprocess_data(data_array)
+    if isinstance(X, (np.ndarray, pd.DataFrame)):
+        if isinstance(X, pd.DataFrame) and isinstance(treatment_col, str):
+            treatment_col = int(X.columns.get_loc(treatment_col))
+        X, y = _preprocess_data(X, y)
+
     else:
         raise TypeError("Input data must be ndarray or DataFrame.")
 
@@ -385,13 +390,12 @@ def hypothesis_test(
         raise TypeError("permutations must be 'all' or an integer greater than 0")
 
     # initialize and fit the bootstrapper to the data
-    bootstrapper = Bootstrapper(random_state=rng, kind=kind)
-    bootstrapper.fit(data, skip=skip)
+    bootstrapper = Bootstrapper(n_resamples=bootstraps, random_state=rng, kind=kind)
 
     # fetch test statistic from dictionary or, if given a
     # custom test statistic, make sure it is callable
     if isinstance(compare, str):
-        teststat = _test_stat_factory(tuple(data[:, treatment_col].tolist()), compare)
+        teststat = _test_stat_factory(tuple(X[:, treatment_col].tolist()), compare)
     elif callable(compare):
         teststat = compare
     else:
@@ -400,10 +404,10 @@ def hypothesis_test(
     # aggregate our data up to the treated level and determine the
     # observed test statistic
     aggregator = GroupbyMean()
-    aggregator.fit(data)
+    aggregator.fit(X)
 
     # determine the number of groupby reductions need to be done
-    levels_to_agg = data.shape[1] - treatment_col - 3
+    levels_to_agg = X.shape[1] - treatment_col - 3
 
     # if levels_to_agg = 0, there are no bootstrap samples to
     # generate.
@@ -412,7 +416,7 @@ def hypothesis_test(
         simplefilter("always", UserWarning)
         warn("No levels to bootstrap. Setting bootstraps to zero.")
 
-    test = data
+    test = X
     test = aggregator.transform(test, iterations=levels_to_agg)
     truediff = teststat(test[:, treatment_col], test[:, -1])
 
@@ -450,10 +454,11 @@ def hypothesis_test(
     # already did one set of permutations
     bootstraps -= 1
 
-    for j in range(bootstraps):
-        # generate a bootstrapped sample and aggregate it up to the
-        # treated level
-        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
+    for X_resample, y_resample in bootstrapper.resample(
+        X, y, start_col=treatment_col + 2, skip=skip
+    ):
+        # aggregate it up to the treated level
+        bootstrapped_sample = np.column_stack((X, y))
         bootstrapped_sample = aggregator.transform(
             bootstrapped_sample, iterations=levels_to_agg
         )
