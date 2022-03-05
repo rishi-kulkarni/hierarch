@@ -8,6 +8,3 @@ numpy, numba, sympy, and scipy.
 It aims to make design-based randomization tests as easy as possible for experimental
 researchers.
 """
-import hierarch.stats
-import hierarch.power
-import hierarch.resampling
