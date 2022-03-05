@@ -458,7 +458,7 @@ def hypothesis_test(
         X, y, start_col=treatment_col + 2, skip=skip
     ):
         # aggregate it up to the treated level
-        bootstrapped_sample = np.column_stack((X, y))
+        bootstrapped_sample = np.column_stack((X_resample, y_resample))
         bootstrapped_sample = aggregator.transform(
             bootstrapped_sample, iterations=levels_to_agg
         )
