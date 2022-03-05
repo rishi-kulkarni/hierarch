@@ -3,6 +3,7 @@ import hierarch.resampling as resampling
 from hierarch.power import DataSimulator
 import scipy.stats as stats
 import numpy as np
+from numpy.testing import assert_almost_equal, assert_equal
 import pandas as pd
 
 
@@ -25,9 +26,10 @@ class TestIDClusters(unittest.TestCase):
 
 
 class TestBootstrapper(unittest.TestCase):
-    sim = DataSimulator([[stats.norm], [stats.norm], [stats.norm]])
-    sim.fit([2, 3, 3])
-    data_1 = sim.generate()
+    def setUp(self):
+        sim = DataSimulator([[stats.norm], [stats.norm], [stats.norm]])
+        sim.fit([2, 3, 3])
+        self.data_1 = sim.generate()
 
     def test_seeding(self):
         """
@@ -40,32 +42,45 @@ class TestBootstrapper(unittest.TestCase):
         boot = resampling.Bootstrapper(n_resamples=1, random_state=1, kind="weights")
         test_2 = next(boot.resample(self.data_1[:, :-2]))
 
-        for idx, v in enumerate(test_1):
-            self.assertAlmostEqual(v, test_2[idx])
+        assert_equal(test_1, test_2)
 
     def test_efron_bootstrapper(self):
         """
         Tests the Efron bootstrap "contract" - the final weights should sum
         to the sum of the original weights within each column.
+
+        Checks that sums of weights are as expected based on what columns
+        are being resampled, i.e. if starting at column 0 in this test,
+        all weights should sum to 18. If starting at column 1, there should
+        be two groups of weights that sum to 9, etc.
         """
         boot = resampling.Bootstrapper(n_resamples=10, kind="weights")
-        self.data_1[:, -1] = 1
+        X = self.data_1[:, :-2]
         starts = (0, 1, 2)
         for start in starts:
-            for test in boot.resample(self.data_1, start_col=start):
-                self.assertAlmostEqual(self.data_1[:, -1].sum(), test.sum())
+            _, index_bins, bin_sums = np.unique(
+                X[:, :start], axis=0, return_index=True, return_counts=True
+            )
+            for test in boot.resample(X, start_col=start):
+                generated_bin_sums = np.add.reduceat(test, index_bins)
+                assert_equal(generated_bin_sums, bin_sums)
 
     def test_bayesian_bootstrapper(self):
         """
-        Tests the Efron bootstrap "contract" - the final weights should sum
-        to the sum of the original weights within each column.
+        Tests the Bayesian bootstrap "contract" - the final weights should sum
+        to the sum of the original weights within each column. Uses
+        assert_almost_equal because bayesian bootstrap weights are floats.
         """
         boot = resampling.Bootstrapper(n_resamples=10, kind="bayesian")
-        self.data_1[:, -1] = 1
+        X = self.data_1[:, :-2]
         starts = (0, 1, 2)
         for start in starts:
-            for test in boot.resample(self.data_1, start_col=start):
-                self.assertAlmostEqual(self.data_1[:, -1].sum(), test.sum())
+            _, index_bins, bin_sums = np.unique(
+                X[:, :start], axis=0, return_index=True, return_counts=True
+            )
+            for test in boot.resample(X, start_col=start):
+                generated_bin_sums = np.add.reduceat(test, index_bins)
+                assert_almost_equal(generated_bin_sums, bin_sums)
 
     def test_bootstrapper_exceptions(self):
         with self.assertRaises(KeyError) as raises:
@@ -90,13 +105,15 @@ class TestBootstrapper(unittest.TestCase):
         with self.assertRaises(IndexError) as raises:
             next(boot.resample(self.data_1, skip=[2.3]))
         self.assertIn(
-            "skip values must be integers corresponding to column indices.",
+            "skip contains invalid column indexes for X:",
             str(raises.exception),
         )
 
         with self.assertRaises(IndexError) as raises:
             next(boot.resample(self.data_1, skip=[5]))
-        self.assertIn("skip index out of bounds for this array.", str(raises.exception))
+        self.assertIn(
+            "skip contains invalid column indexes for X:", str(raises.exception)
+        )
 
 
 class TestWeightstoIndex(unittest.TestCase):
