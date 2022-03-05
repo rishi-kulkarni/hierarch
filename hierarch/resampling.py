@@ -1,12 +1,13 @@
 from collections import deque
 from functools import lru_cache
 from itertools import cycle
-from typing import Callable, Generator, Iterable, Tuple, Union
+from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
-from numba import jit
+from numba import jit, types
+from numba.extending import overload, register_jitable
 
-from hierarch.internal_functions import (
+from .internal_functions import (
     _repeat,
     msp,
     nb_fast_shuffle,
@@ -299,36 +300,92 @@ class Bootstrapper:
         # this makes it both reproducible and thread-safe enough
         nb_seed = self._random_generator.integers(low=2**32 - 1)
         set_numba_random_state(nb_seed)
+
         if kind in self._BOOTSTRAP_ALGORITHMS:
             self._kind = kind
+            self.bootstrap_sampler = _bootstrapper_factory(kind)
         else:
             raise KeyError("Invalid 'kind' argument.")
 
-    def resample(self, X: np.ndarray, y=None, start_col=0, skip=None) -> None:
-        """Fit the bootstrapper to the target data.
+    def resample(
+        self,
+        X: np.ndarray,
+        y: Optional[np.ndarray] = None,
+        start_col: int = 0,
+        skip: Optional[List[int]] = None,
+    ) -> Generator[Union[np.ndarray, Tuple[np.ndarray, np.ndarray]], None, None]:
+        """Generate bootstrapped samples from design matrix X.
 
         Parameters
         ----------
-        data : 2D array
-            Target data. Must be lexicographically sorted.
-        sort : bool
-            Set to false is data is already sorted by row, by default True.
-        skip : list of integers, optional
+        X : np.ndarray
+            2D Design matrix
+        y : np.ndarray, optional
+            1D Regressand values, by default None
+        start_col : int, optional
+            The first column of the design matrix to bootstrap, by default 0
+        skip : _type_, optional
             Columns to skip in the bootstrap. Skip columns that were sampled
             without replacement from the prior column, by default None.
-        y : int, optional
-            column index of the dependent variable, by default -1
+
+        Yields
+        ------
+        Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]
+            If y is not provided, each resample will be a 1D np.ndarray containing
+            resampled weights (or indexes, if kind="indexes"). If y is provided,
+            each resample will be a tuple of X (or reindexed X), reweighted y
+            (or reindexed y) values.
 
         Raises
         ------
-        ValueError
-            Raises error if the input data is not a numpy numeric array.
-        AttributeError
-            Raises error if the input data is not a numpy array.
-
+        IndexError
+            Raised if skip does not contain valid indexes for X.
         """
+        _validate(X, y)
+
+        if skip is None:
+            skip = []
+        else:
+            if not set(skip).issubset(range(X.shape[1] + 1)):
+                raise IndexError(f"skip contains invalid column indexes for X: {skip}")
+
+        resampling_plan = tuple(
+            (np.array(cluster), False) if idx in skip else (np.array(cluster), True)
+            for idx, cluster in enumerate(_id_cluster_counts(X))
+        )
+
+        bootstrap_sample = self.bootstrap_sampler
+
+        if y is None:
+            for i in range(self._n_resamples):
+                yield bootstrap_sample(resampling_plan, start_col)
+
+        elif self._kind == "indexes":
+            for i in range(self._n_resamples):
+                idx_resampled = bootstrap_sample(resampling_plan, start_col)
+                yield X[idx_resampled], y[idx_resampled]
+
+        else:
+            for i in range(self._n_resamples):
+                weights = bootstrap_sample(resampling_plan, start_col)
+                yield X, y * weights
+
+
+def _validate(*arrs):
+    """Helper function to validate that incoming arrays are numeric numpy arrays.
+
+    Raises
+    ------
+    ValueError
+        Raised if any array contains non-numeric data.
+    AttributeError
+        Raised if any argument is not a numpy array.
+    """
+    for arr in arrs:
+        if arr is None:
+            continue
         try:
-            if not np.issubdtype(X.dtype, np.number):
+            if not np.issubdtype(arr.dtype, np.number):
                 raise ValueError(
                     "Bootstrapper can only handle numeric datatypes. Please pre-process your data."
                 )
@@ -337,121 +394,97 @@ class Bootstrapper:
                 "Bootstrapper can only handle numpy arrays. Please pre-process your data."
             )
 
-        if skip is not None:
-            skip = list(skip)
-            for v in iter(skip):
-                if not isinstance(v, int):
-                    raise IndexError(
-                        "skip values must be integers corresponding to column indices."
-                    )
-                if v >= X.shape[1] - 1:
-                    raise IndexError("skip index out of bounds for this array.")
-        else:
-            skip = []
 
-        cluster_desc = _id_cluster_counts(X)
+def _concatenate_1D_from_list(arr_list: np.ndarray) -> np.ndarray:
+    """Helper function to do np.concatenate from a list of arguments.
 
-        columns_to_resample = np.array([True for k in range(X.shape[1])])
-        for key in skip:
-            columns_to_resample[key] = False
+    Numba doesn't support this because it doesn't really work well,
+    but if we are only passing in lists that are made inside jitted
+    functions, it's okay."""
+    out = np.empty(shape=sum([arr.size for arr in arr_list]))
+    put_idx = 0
+    for arr in arr_list:
+        out[put_idx : put_idx + arr.size] = arr
+        put_idx += arr.size
 
-        transform = _bootstrapper_factory(
-            tuple(columns_to_resample), cluster_desc, X.shape[1], self._kind
-        )
-
-        if y is None:
-            for i in range(self._n_resamples):
-                yield transform(X, start_col)
-        elif self._kind == "indexes":
-            for i in range(self._n_resamples):
-                idx_resampled = transform(X, start_col)
-                yield X[idx_resampled], y[idx_resampled]
-        elif self._kind in ("weights", "bayesian"):
-            for i in range(self._n_resamples):
-                weights = transform(X, start_col)
-                yield X, y * weights
+    return out
 
 
-@lru_cache()
-def _bootstrapper_factory(
-    columns_to_resample: int, clusternum_dict: Tuple[Tuple[int]], shape: int, kind: str
-) -> Callable:
+@register_jitable
+def _do_conc_impl(arr_list, dtype):
+    out = np.empty(shape=sum([arr.size for arr in arr_list]), dtype=dtype)
+    put_idx = 0
+    for arr in arr_list:
+        out[put_idx : put_idx + arr.size] = arr
+        put_idx += arr.size
+    return out
+
+
+@overload(_concatenate_1D_from_list)
+def ol_concatenate_1D_from_list(arr_list):
+    if isinstance(arr_list[0].dtype, types.Integer):
+
+        def conc_1D_impl(arr_list):
+            return _do_conc_impl(arr_list, dtype=np.int64)
+
+    else:
+
+        def conc_1D_impl(arr_list):
+            return _do_conc_impl(arr_list, dtype=np.float64)
+
+    return conc_1D_impl
+
+
+@lru_cache
+def _bootstrapper_factory(kind: str) -> Callable:
     """Factory function that returns the appropriate transform()."""
 
     # these helper functions wrap the distributions so that they take the same arguments
     @jit(nopython=True)
-    def _multinomial_distribution(weights, idx, v):
-        return np.random.multinomial(v * weights[idx], [1 / v] * v)
+    def _multinomial_distribution(weights, v):
+        return np.random.multinomial(v * weights, [1 / v] * v)
 
     @jit(nopython=True)
-    def _dirichlet_distribution(weights, idx, v):
-        return (
-            np.random.dirichlet([1 for a in range(v.item())], size=None)
-            * weights[idx]
-            * v.item()
-        )
+    def _dirichlet_distribution(weights, v):
+        return np.random.dirichlet([1] * v, size=None) * weights * v
 
     @jit(nopython=True)
-    def _bootstrap_algorithm(X, start):
-        # at the start, everything is weighted equally
-        weights = np.array([1 for i in clusternum_dict[start]], dtype=_weight_dtype)
+    def _resample_weights(resampling_plan, start):
+        # at the start, all samples are weighted equally
+        weights = np.array([1 for i in resampling_plan[start][0]], dtype=_weight_dtype)
 
-        for key in range(start, len(clusternum_dict)):
-            to_do = clusternum_dict[key]
-            # preallocate the full array for new_weight
-            new_weight = np.empty(to_do.sum(), _weight_dtype)
-            place = 0
-
-            # if not resampling this column, new_weight is the prior column's weights
-            if not columns_to_resample[key]:
-                for idx, v in enumerate(to_do):
-                    new_weight[place : place + v] = np.array(
-                        [weights[idx] for m in range(v.item())]
-                    )
-                    place += v
-
-            # else do a multinomial experiment to generate new_weight
+        for idx, (subclusters, to_resample) in enumerate(resampling_plan):
+            if idx < start:
+                continue
+            elif not to_resample:
+                # expand the old weights to fit into the column
+                weights = np.repeat(weights, subclusters)
             else:
-                for idx, v in enumerate(to_do):
-                    # v*weights[idx] carries over weights from previous columns
-                    new_weight[place : place + v] = _dist(weights, idx, v)
-                    place += v
-
-            weights = new_weight
-
+                # generate new weights from the distribution we're using
+                weights = _concatenate_1D_from_list(
+                    [_dist(weights[idx], v) for idx, v in enumerate(subclusters)]
+                )
         return weights
 
-    clusternum_dict = tuple(np.array(cluster) for cluster in clusternum_dict)
-    columns_to_resample = np.array(columns_to_resample)
+    _KIND_DISPATCHER = {
+        "weights": (np.int64, _multinomial_distribution),
+        "indexes": (np.int64, _multinomial_distribution),
+        "bayesian": (np.float64, _dirichlet_distribution),
+    }
+    _weight_dtype, _dist = _KIND_DISPATCHER[kind]
 
-    if kind in ("weights", "indexes"):
-        _weight_dtype = np.int64
-        _dist = _multinomial_distribution
-
-    elif kind in ("bayesian"):
-        # bayesian bootstrap produces non-integer weights
-        _weight_dtype = np.float64
-        _dist = _dirichlet_distribution
-
-    if kind in ("weights", "bayesian"):
+    if kind == "indexes":
 
         @jit(nopython=True)
-        def _bootstrapper_impl(X, start):
-            weights = _bootstrap_algorithm(X, start)
-            return weights
-
-    elif kind == "indexes":
-
-        @jit(nopython=True)
-        def _bootstrapper_impl(X, start):
-            weights = _bootstrap_algorithm(X, start)
-            indexes = _weights_to_index(weights)
-            return indexes
+        def _bootstrapper_impl(resampling_plan, start):
+            weights = _resample_weights(resampling_plan, start)
+            return _weights_to_index(weights)
 
     else:
-        raise KeyError(
-            "No such bootstrapping algorithm. kind must be 'weights' or 'indexes' or 'bayesian'"
-        )
+
+        @jit(nopython=True)
+        def _bootstrapper_impl(resampling_plan, start):
+            return _resample_weights(resampling_plan, start)
 
     return _bootstrapper_impl
 
