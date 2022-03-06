@@ -129,63 +129,46 @@ class TestWeightstoIndex(unittest.TestCase):
 
 
 class TestPermuter(unittest.TestCase):
-    orig_data = np.arange(100).reshape((50, 2))
+    def setUp(self):
+        self.orig_data = np.arange(100).reshape((50, 2))
 
     def test_random(self):
         """
         Tests random permutation.
         """
         shuf_1 = self.orig_data.copy()
-        shuf_2 = self.orig_data.copy()
 
-        permuter = resampling.Permuter(random_state=1)
-        permuter.fit(shuf_1, 0, exact=False)
-        permuter.transform(shuf_1)
+        permuter = resampling.Permuter(n_resamples=10, exact=False, random_state=1)
+        sample_1 = [x for x in permuter.resample(shuf_1, 0)]
 
-        permuter = resampling.Permuter(random_state=1)
-        permuter.fit(shuf_2, 0, exact=False)
-        permuter.transform(shuf_2)
+        permuter = resampling.Permuter(n_resamples=10, exact=False, random_state=1)
+        sample_2 = [x for x in permuter.resample(shuf_1, 0)]
 
-        for idx, v in enumerate(shuf_1[:, 0]):
-            self.assertEqual(v, shuf_2[:, 0][idx])
-
-        for i in range(10):
-            permuter.transform(shuf_1)
-            shuf_1[:, 0].sort()
-
-            for idx, v in enumerate(shuf_1[:, 0]):
-                self.assertEqual(v, self.orig_data[:, 0][idx])
+        for arr_1, arr_2 in zip(sample_1, sample_2):
+            assert_equal(arr_1, arr_2)
 
     def test_exact(self):
         """
         Test that exact permutations are generated in the same order.
         """
         shuf_1 = self.orig_data.copy()
-        shuf_2 = self.orig_data.copy()
 
-        permuter = resampling.Permuter()
-        permuter.fit(shuf_1, 0, exact=True)
-        permuter.transform(shuf_1)
+        permuter_1 = resampling.Permuter(n_resamples=10, exact=True)
+        permuter_2 = resampling.Permuter(n_resamples=10, exact=True)
 
-        permuter = resampling.Permuter()
-        permuter.fit(shuf_2, 0, exact=True)
-        permuter.transform(shuf_2)
-
-        for idx, v in enumerate(shuf_1[:, 0]):
-            self.assertEqual(v, shuf_2[:, 0][idx])
-
-        for i in range(10):
-            permuter.transform(shuf_1)
-            shuf_1[:, 0].sort()
-
-            for idx, v in enumerate(shuf_1[:, 0]):
-                self.assertEqual(v, self.orig_data[:, 0][idx])
+        for i in range(20):
+            arr_1 = next(permuter_1.resample(shuf_1, 0))
+            arr_2 = next(permuter_2.resample(shuf_1, 0))
+            assert_equal(arr_1, arr_2)
 
     def test_permuter_exceptions(self):
-        permuter = resampling.Permuter()
-        with self.assertRaises(Exception) as raises:
-            permuter.transform(self.orig_data)
-        self.assertIn("Use fit() before using transform().", str(raises.exception))
+        permuter = resampling.Permuter(n_resamples=1, exact=True)
+        with self.assertRaises(NotImplementedError) as raises:
+            next(permuter.resample(self.orig_data, col_to_permute=1))
+        self.assertIn(
+            "Exact permutation only available for col_to_permute = 0.",
+            str(raises.exception),
+        )
 
 
 if __name__ == "__main__":

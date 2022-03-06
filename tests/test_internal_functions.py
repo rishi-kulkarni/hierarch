@@ -139,22 +139,13 @@ class TestFastShuffle(unittest.TestCase):
         for idx, v in enumerate(orig_unique):
             self.assertEqual(v, shuffled_unique[idx])
 
-    def test_shuffle(self):
-        lengths = (5, 10, 100, 500)
-        for length in lengths:
-            original = np.arange(length)
-            shuffled = np.arange(length)
-            for i in range(50):
-                internal_functions.nb_fast_shuffle(shuffled)
-                self._check_shuffle(original, shuffled)
-
     def test_strat_shuffle(self):
         original = np.arange(20)
         original[10:] = 0
         shuffled = np.arange(20)
         shuffled[10:] = 0
         for i in range(50):
-            internal_functions.nb_strat_shuffle(shuffled, (0, 10, 20))
+            internal_functions.nb_strat_shuffle(shuffled, ((0, 10), (10, 20)))
             self._check_shuffle(original, shuffled)
             self.assertEqual(shuffled[10:].sum(), 0)
 

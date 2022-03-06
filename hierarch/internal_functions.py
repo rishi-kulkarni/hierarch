@@ -155,7 +155,7 @@ def bivar_central_moment(x, y, pow=1, ddof=1):
 
 @nb.jit(nopython=True, cache=True)
 def _repeat(target, counts):
-    return np.repeat(np.array(target), counts)
+    return np.repeat(target, counts)
 
 
 @nb.jit(nopython=True, inline="always")
@@ -214,12 +214,11 @@ def nb_strat_shuffle(arr, stratification):
     stratification : 1D array-like
         Ranges to shuffle within. Must be sorted.
     """
-    for v, w in zip(stratification[:-1], stratification[1:]):
-        i = w - v - 1
-        while i > 0:
-            j = bounded_uint(i + 1)
-            arr[i + v], arr[j + v] = arr[j + v], arr[i + v]
-            i -= 1
+    for low, high in stratification:
+        for i in range(low, high - 2):
+            j = bounded_uint(high - i) + i
+            arr[i], arr[j] = arr[j], arr[i]
+    return arr
 
 
 nb.jit(nopython=True, cache=True)
@@ -256,7 +255,7 @@ def msp(items):
         for i in range(N):
             (dat, j) = E[j]
             rv.append(dat)
-        return rv
+        return np.array(rv)
 
     N = len(E)
     # put E into linked-list format

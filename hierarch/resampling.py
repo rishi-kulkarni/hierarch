@@ -1,6 +1,5 @@
 from collections import deque
 from functools import lru_cache
-from itertools import cycle
 from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -10,9 +9,7 @@ from numba.extending import overload, register_jitable
 from .internal_functions import (
     _repeat,
     msp,
-    nb_fast_shuffle,
     nb_strat_shuffle,
-    nb_unique,
     set_numba_random_state,
 )
 
@@ -77,20 +74,20 @@ def _id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
     # the number of clusters in the y-values is just the counts
     # from np.uniques of the design matrix
     prior_uniques, final_counts = np.unique(design, axis=0, return_counts=True)
-    cluster_desc.appendleft(tuple(final_counts))
+    cluster_desc.appendleft(final_counts)
 
     # get the number of clusters in each column of the design matrix
     for i in range(design.shape[1]):
         prior_uniques, counts = np.unique(
             prior_uniques[:, :-1], axis=0, return_counts=True
         )
-        cluster_desc.appendleft(tuple(counts))
+        cluster_desc.appendleft(counts)
     # return a tuple because it plays nicer with numba
     return tuple(cluster_desc)
 
 
 class Bootstrapper:
-    """Bootstrapper(random_state=None, kind="weights")
+    """Bootstrapper(n_resamples, random_state=None, kind="weights")
 
     This transformer performs a nested bootstrap on the target data.
     Undefined behavior if the target data is not lexicographically
@@ -98,6 +95,8 @@ class Bootstrapper:
 
     Parameters
     ----------
+    n_resamples: int
+        Number of resamples for Bootstrapper's resample method to generate.
     random_state : int or numpy.random.Generator instance, optional
         Seeds the Bootstrapper for reproducibility, by default None
     kind : { "weights", "bayesian", "indexes" }
@@ -350,7 +349,7 @@ class Bootstrapper:
                 raise IndexError(f"skip contains invalid column indexes for X: {skip}")
 
         resampling_plan = tuple(
-            (np.array(cluster), False) if idx in skip else (np.array(cluster), True)
+            (cluster, False) if idx in skip else (cluster, True)
             for idx, cluster in enumerate(_id_cluster_counts(X))
         )
 
@@ -519,6 +518,15 @@ class Permuter:
 
     Parameters
     ----------
+    n_resamples: int
+        Number of resamples for Permuter's resample method to generate.
+        Overridden by exact, if true.
+    exact : bool, optional
+        If True, overrides n_resamples and instead causes resample to
+        enumerate all possible permutations and iterate through them
+        one by one, by default False.
+        Warning: there can be a very large number of permutations for
+        large datasets.
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
 
@@ -599,159 +607,97 @@ class Permuter:
     """
 
     def __init__(
-        self, random_state: Union[np.random.Generator, int, None] = None
+        self,
+        n_resamples: int,
+        *,
+        exact: bool = False,
+        random_state: Union[np.random.Generator, int, None] = None,
     ) -> None:
+
+        self._n_resamples = n_resamples
+        self._exact = exact
+
         self.random_generator = np.random.default_rng(random_state)
         if random_state is not None:
             nb_seed = self.random_generator.integers(low=2**32)
             set_numba_random_state(nb_seed)
 
-    def fit(self, data: np.ndarray, col_to_permute: int, exact: bool = False) -> None:
-        """Fit the permuter to the target data.
+    def resample(
+        self, X: np.ndarray, col_to_permute: int
+    ) -> Generator[np.ndarray, None, None]:
+        """Yield copies of X with the target column randomly shuffled.
 
         Parameters
         ----------
-        data : 2D numeric ndarray
-            Target data.
+        X : np.ndarray
+            Design matrix
         col_to_permute : int
-            Index of target column.
-        exact : bool, optional
-            If True, will enumerate all possible permutations and
-            iterate through them one by one, by default False. Only
-            works if target column has index 0.
+            Target level to permute
+
+        Yields
+        ------
+        Generator[np.ndarray, None, None]
+            X with col_to_permute randomly shuffled
+
+        Raises
+        ------
+        NotImplementedError
+            Exact permutation when col_to_permute != 0 has not been implemented.
         """
-        values, indexes, counts = np.unique(
-            data[:, : col_to_permute + 2], return_index=True, return_counts=True, axis=0
+
+        # we will actually be permuting the unique rows in this submatrix,
+        # then duplicating any rows that contain subclusters
+        permutation_matrix, subclusters = np.unique(
+            X[:, : col_to_permute + 2], axis=0, return_counts=True
+        )
+        # if the target column is nested within another level, we have
+        # to stratify the shuffle operation
+        _, supercluster_idxs = np.unique(
+            permutation_matrix[:, :col_to_permute], axis=0, return_index=True
+        )
+        supercluster_idxs = np.append(supercluster_idxs, len(permutation_matrix))
+        supercluster_idxs = tuple(
+            (low, high)
+            for low, high in zip(supercluster_idxs[:-1], supercluster_idxs[1:])
         )
 
-        if col_to_permute != 0 and exact is True:
+        if col_to_permute != 0 and self._exact is True:
             raise NotImplementedError(
                 "Exact permutation only available for col_to_permute = 0."
             )
 
-        # transform() is going to be called a lot, so generate a specialized version on the fly
-        # this keeps us from having to do unnecessary flow control
+        col_values = permutation_matrix[:, col_to_permute]
 
-        if exact is True:
-            col_values = values[:, -2].copy()
-            self.iterator = cycle(msp(col_values))
-            if len(col_values) == len(data):
-                self.transform = _exact_return(col_to_permute, self.iterator)
-            else:
-                self.transform = _exact_repeat_return(
-                    col_to_permute, self.iterator, counts
-                )
-
+        if self._exact is True:
+            permutation_generator = msp(col_values)
         else:
-            try:
-                values[:, -3]
-                keys = nb_unique(values[:, :-2])[1]
-                keys = np.append(keys, values[:, -3].shape[0])
-            except IndexError:
-                keys = np.zeros(1, dtype=np.int64)
-                keys = np.append(keys, values[:, -2].shape[0])
-            keys = tuple(keys.tolist())
+            permutation_generator = _random_return(
+                col_values, supercluster_idxs, self._n_resamples
+            )
+        if not np.all(subclusters == 1):
+            permutation_generator = _repeat_gen(permutation_generator, subclusters)
 
-            if indexes.size == len(data):
-                self.transform = _random_return(col_to_permute, keys)
-
-            else:
-                col_values = data[:, col_to_permute][indexes]
-                col_values = tuple(col_values.tolist())
-                counts = tuple(counts.tolist())
-                self.transform = _random_repeat_return(
-                    col_to_permute, col_values, keys, counts
-                )
-
-    def transform(self, data: np.ndarray) -> np.ndarray:
-        """Permute target column in-place.
-
-        Parameters
-        ----------
-        data : 2D numeric ndarray
-            Target data.
-
-        Returns
-        -------
-        data : 2D numeric ndarray
-            Original data with target column shuffled, in a stratified fashion if necessary.
-        """
-
-        # this method is defined on the fly in fit() based one of the
-        # four static methods defined below
-        raise Exception("Use fit() before using transform().")
+        for permutation in permutation_generator:
+            # permute values in this copy so that original array
+            # is untouched
+            cached_X = X.copy()
+            cached_X[:, col_to_permute] = permutation
+            yield cached_X
 
 
-def _exact_return(
-    col_to_permute: int, generator: Generator[Iterable, None, None]
+def _repeat_gen(
+    generator: Generator[Iterable, None, None], counts: Iterable
+) -> Generator[List[int], None, None]:
+    """Essentially a generator wrapper that uses numpy.repeat on whatever the
+    generator yields."""
+
+    return (_repeat(resampled_column, counts) for resampled_column in generator)
+
+
+def _random_return(
+    col_to_permute: np.ndarray, stratification: Tuple[Tuple[int]], n_resamples: int
 ) -> Callable:
-    """Transformer when exact is True and permutations are unrestricted."""
+    """Generator that performs a stratified shuffle on a column."""
 
-    def _exact_return_impl(data):
-        data[:, col_to_permute] = next(generator)
-        return data
-
-    return _exact_return_impl
-
-
-def _exact_repeat_return(
-    col_to_permute: int, generator: Generator[Iterable, None, None], counts: Iterable
-) -> Callable:
-    """Transformer when exact is True and permutations are restricted by
-    repetition of treated entities.
-    """
-
-    def _rep_iter_return_impl(data):
-        data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
-        return data
-
-    return _rep_iter_return_impl
-
-
-@lru_cache()
-def _random_return(col_to_permute: int, keys: Iterable) -> Callable:
-    """Transformer when exact is False and repetition is not required."""
-
-    if col_to_permute == 0:
-
-        @jit(nopython=True)
-        def _random_return_impl(data):
-            nb_fast_shuffle(data[:, col_to_permute])
-            return data
-
-    else:
-
-        @jit(nopython=True)
-        def _random_return_impl(data):
-            nb_strat_shuffle(data[:, col_to_permute], keys)
-            return data
-
-    return _random_return_impl
-
-
-@lru_cache()
-def _random_repeat_return(
-    col_to_permute: int, col_values: Iterable, keys: Iterable, counts: Iterable
-) -> Callable:
-    """Transformer when exact is False and repetition is required."""
-    col_values = np.array(col_values)
-    counts = np.array(counts)
-    if col_to_permute == 0:
-
-        @jit(nopython=True)
-        def _random_repeat_return_impl(data):
-            shuffled_col_values = col_values.copy()
-            nb_fast_shuffle(shuffled_col_values)
-            data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
-            return data
-
-    else:
-
-        @jit(nopython=True)
-        def _random_repeat_return_impl(data):
-            shuffled_col_values = col_values.copy()
-            nb_strat_shuffle(shuffled_col_values, keys)
-            data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
-            return data
-
-    return _random_repeat_return_impl
+    for i in range(n_resamples):
+        yield nb_strat_shuffle(col_to_permute, stratification)
