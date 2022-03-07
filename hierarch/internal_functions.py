@@ -215,7 +215,7 @@ def nb_strat_shuffle(arr, stratification):
         Ranges to shuffle within. Must be sorted.
     """
     for low, high in stratification:
-        for i in range(low, high - 2):
+        for i in range(low, high - 1):
             j = bounded_uint(high - i) + i
             arr[i], arr[j] = arr[j], arr[i]
     return arr
