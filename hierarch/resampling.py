@@ -12,6 +12,7 @@ from .internal_functions import (
     nb_strat_shuffle,
     set_numba_random_state,
 )
+from .pipeline import Pipeline
 
 
 def _id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
@@ -645,13 +646,17 @@ class Permuter:
             Exact permutation when col_to_permute != 0 has not been implemented.
         """
 
+        # permute values in this copy so that original array
+        # is untouched
+        cached_X = X.copy()
+
         # we will actually be permuting the unique rows in this submatrix,
         # then duplicating any rows that contain subclusters
         permutation_matrix, subclusters = np.unique(
             X[:, : col_to_permute + 2], axis=0, return_counts=True
         )
         # if the target column is nested within another level, we have
-        # to stratify the shuffle operation
+        # to stratify the fisher-yates shuffle
         _, supercluster_idxs = np.unique(
             permutation_matrix[:, :col_to_permute], axis=0, return_index=True
         )
@@ -668,21 +673,45 @@ class Permuter:
 
         col_values = permutation_matrix[:, col_to_permute]
 
-        if self._exact is True:
-            permutation_generator = msp(col_values)
-        else:
-            permutation_generator = _random_return(
-                col_values, supercluster_idxs, self._n_resamples
-            )
-        if not np.all(subclusters == 1):
-            permutation_generator = _repeat_gen(permutation_generator, subclusters)
+        permutation_generator = _shuffle_generator_factory(
+            col_values, supercluster_idxs, subclusters, self._exact, self._n_resamples
+        )
 
-        for permutation in permutation_generator:
-            # permute values in this copy so that original array
-            # is untouched
-            cached_X = X.copy()
+        for i, permutation in zip(range(self._n_resamples), permutation_generator):
             cached_X[:, col_to_permute] = permutation
-            yield cached_X
+            yield cached_X.copy()
+
+
+def _shuffle_generator_factory(
+    col_values: Tuple,
+    supercluster_idxs: Tuple,
+    subclusters: Tuple,
+    exact: bool,
+    n_resamples: int,
+):
+    """This factory function generates a permutation algorithm per our needs.
+
+    Parameters
+    ----------
+    col_values : Tuple
+    supercluster_idxs : Tuple
+    subclusters : Tuple
+    exact : bool
+    """
+    permutation_generator = Pipeline()
+    if exact is True:
+        permutation_generator.add_component((msp, {}))
+    else:
+        permutation_generator.add_component(
+            (
+                _random_return,
+                {"stratification": supercluster_idxs, "n_resamples": n_resamples},
+            )
+        )
+    if not np.all(subclusters == 1):
+        permutation_generator.add_component((_repeat_gen, {"counts": subclusters}))
+
+    return permutation_generator.process(col_values)
 
 
 def _repeat_gen(
@@ -699,5 +728,6 @@ def _random_return(
 ) -> Callable:
     """Generator that performs a stratified shuffle on a column."""
 
-    for i in range(n_resamples):
-        yield nb_strat_shuffle(col_to_permute, stratification)
+    return (
+        nb_strat_shuffle(col_to_permute, stratification) for i in range(n_resamples)
+    )
