@@ -31,6 +31,9 @@ class Pipeline:
         generator function. The first argument to each component
         must be the result of the last component of the pipeline.
 
+        Intentionally doesn't allow positional arguments aside from the
+        first to help improve clarity.
+
         Parameters
         ----------
         component : Tuple[Callable, Dict]
