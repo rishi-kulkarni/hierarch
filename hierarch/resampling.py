@@ -700,7 +700,7 @@ def _shuffle_generator_factory(
     """
     permutation_generator = Pipeline()
     if exact is True:
-        permutation_generator.add_component((msp, {}))
+        permutation_generator.add_component(msp)
     else:
         permutation_generator.add_component(
             (
