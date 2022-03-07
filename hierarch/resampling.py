@@ -709,18 +709,14 @@ def _shuffle_generator_factory(
             )
         )
     if not np.all(subclusters == 1):
-        permutation_generator.add_component((_repeat_gen, {"counts": subclusters}))
+        permutation_generator.add_component(
+            (
+                lambda generator, counts: (_repeat(x, counts) for x in generator),
+                {"counts": subclusters},
+            )
+        )
 
     return permutation_generator.process(col_values)
-
-
-def _repeat_gen(
-    generator: Generator[Iterable, None, None], counts: Iterable
-) -> Generator[List[int], None, None]:
-    """Essentially a generator wrapper that uses numpy.repeat on whatever the
-    generator yields."""
-
-    return (_repeat(resampled_column, counts) for resampled_column in generator)
 
 
 def _random_return(
