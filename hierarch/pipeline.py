@@ -15,7 +15,10 @@ class Pipeline:
         self, pipeline_components: Optional[List[Tuple[Callable, Dict]]] = None
     ) -> None:
         if pipeline_components is not None:
-            self._pipeline = pipeline_components
+            self._pipeline = [
+                tuple((component, {})) if isinstance(component, Callable) else component
+                for component in pipeline_components
+            ]
         else:
             self._pipeline = []
 
@@ -33,7 +36,11 @@ class Pipeline:
         component : Tuple[Callable, Dict]
             Tuple of generator callable, keyword arguments to the callable.
         """
-        self._pipeline.append(component)
+        if isinstance(component, Callable):
+            self._pipeline.append(tuple((component, {})))
+
+        else:
+            self._pipeline.append(component)
 
     def process(self, data: Any) -> Generator[Any, None, None]:
         """Execute the pipeline to return a generator composed
