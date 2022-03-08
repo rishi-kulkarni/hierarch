@@ -355,21 +355,29 @@ class Bootstrapper:
             for idx, cluster in enumerate(_id_cluster_counts(X))
         )
 
-        bootstrap_sample = self.bootstrap_sampler
+        sampler = self.bootstrap_sampler
+
+        bootstrap_pipeline = Pipeline()
+        bootstrap_pipeline.add_component(
+            (
+                _repeat_func,
+                {"func": sampler, "start": start_col, "repetitions": self._n_resamples},
+            )
+        )
 
         if y is None:
-            for i in range(self._n_resamples):
-                yield bootstrap_sample(resampling_plan, start_col)
+            pass
 
         elif self._kind == "indexes":
-            for i in range(self._n_resamples):
-                idx_resampled = bootstrap_sample(resampling_plan, start_col)
-                yield X[idx_resampled], y[idx_resampled]
-
+            bootstrap_pipeline.add_component(
+                lambda generator: ((X[indexes], y[indexes]) for indexes in generator)
+            )
         else:
-            for i in range(self._n_resamples):
-                weights = bootstrap_sample(resampling_plan, start_col)
-                yield X, y * weights
+            bootstrap_pipeline.add_component(
+                lambda generator: ((X, y[weights]) for weights in generator)
+            )
+
+        yield from bootstrap_pipeline.process(resampling_plan)
 
 
 def _validate(*arrs):
@@ -675,23 +683,21 @@ class Permuter:
         col_values = permutation_matrix[:, col_to_permute]
 
         permutation_pipeline = _shuffle_generator_factory(
-            supercluster_idxs, subclusters, self._exact
+            supercluster_idxs, subclusters, self._exact, self._n_resamples
         )
 
         permutation_pipeline.add_component(
             (_place_permutation, {"target_array": cached_X, "col_idx": col_to_permute})
         )
 
-        for i, permuted_design_matrix in zip(
-            range(self._n_resamples), permutation_pipeline.process(col_values)
-        ):
-            yield permuted_design_matrix
+        yield from permutation_pipeline.process(col_values)
 
 
 def _shuffle_generator_factory(
     supercluster_idxs: Tuple,
     subclusters: Tuple,
     exact: bool,
+    n_resamples: int,
 ) -> Pipeline:
     """This factory function generates a permutation algorithm per our needs.
 
@@ -708,11 +714,12 @@ def _shuffle_generator_factory(
     else:
         permutation_pipeline.add_component(
             (
-                lambda col_to_permute, stratification: (
-                    nb_strat_shuffle(col_to_permute, stratification)
-                    for _ in repeat(None)
-                ),
-                {"stratification": supercluster_idxs},
+                _repeat_func,
+                {
+                    "func": nb_strat_shuffle,
+                    "stratification": supercluster_idxs,
+                    "repetitions": n_resamples,
+                },
             )
         )
     if not np.all(subclusters == 1):
@@ -724,6 +731,12 @@ def _shuffle_generator_factory(
         )
 
     return permutation_pipeline
+
+
+def _repeat_func(first_argument, func, repetitions=None, **kwargs):
+    """Utility function that repeats a function on a set
+    of arguments infinitely."""
+    return (func(first_argument, **kwargs) for _ in repeat(None, times=repetitions))
 
 
 def _place_permutation(
