@@ -36,13 +36,17 @@ class TestBootstrapper(unittest.TestCase):
         Tests that setting the random_state generates the same bootstrapped sample.
         """
 
-        boot = resampling.Bootstrapper(n_resamples=1, random_state=1, kind="weights")
-        test_1 = next(boot.resample(self.data_1[:, :-2]))
+        boot_1 = resampling.Bootstrapper(n_resamples=10, random_state=1, kind="weights")
+        test_1_list = [sample for sample in boot_1.resample(self.data_1)]
 
-        boot = resampling.Bootstrapper(n_resamples=1, random_state=1, kind="weights")
-        test_2 = next(boot.resample(self.data_1[:, :-2]))
+        boot_2 = resampling.Bootstrapper(n_resamples=10, random_state=1, kind="weights")
+        test_2_list = [sample for sample in boot_2.resample(self.data_1)]
 
-        assert_equal(test_1, test_2)
+        for test_1, test_2 in zip(
+            test_1_list,
+            test_2_list,
+        ):
+            assert_equal(test_1, test_2)
 
     def test_efron_bootstrapper(self):
         """
