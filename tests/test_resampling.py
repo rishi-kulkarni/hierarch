@@ -132,7 +132,7 @@ class TestPermuter(unittest.TestCase):
     def setUp(self):
         self.orig_data = np.arange(100).reshape((50, 2))
 
-    def test_random(self):
+    def test_random_seeding(self):
         """
         Tests random permutation.
         """
@@ -146,6 +146,39 @@ class TestPermuter(unittest.TestCase):
 
         for arr_1, arr_2 in zip(sample_1, sample_2):
             assert_equal(arr_1, arr_2)
+
+    def test_stratified(self):
+        """Test that within-cluster permutation works as expected."""
+        data = np.array(
+            [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 2], [2, 3], [2, 4]]
+        )
+
+        permuter = resampling.Permuter(n_resamples=10, exact=False, random_state=1)
+
+        for permutation in permuter.resample(data, col_to_permute=1):
+            expected_per_cluster = set((1, 2, 3, 4))
+            self.assertEqual(
+                expected_per_cluster,
+                expected_per_cluster.intersection(permutation[:4, 1]),
+            )
+            self.assertEqual(
+                expected_per_cluster,
+                expected_per_cluster.intersection(permutation[4:, 1]),
+            )
+
+    def test_repeat(self):
+        """Test that subclusters move together."""
+
+        data = np.array([[1, 1], [1, 2]]).repeat(3, axis=0)
+
+        permuter = resampling.Permuter(n_resamples=10, exact=False, random_state=1)
+
+        for permutation in permuter.resample(data, col_to_permute=1):
+            condition = all(permutation[:, 1] == [1, 1, 1, 2, 2, 2]) or all(
+                permutation[:, 1] == [2, 2, 2, 1, 1, 1]
+            )
+
+            self.assertTrue(condition)
 
     def test_exact(self):
         """
