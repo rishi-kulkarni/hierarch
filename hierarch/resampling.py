@@ -1,5 +1,6 @@
 from collections import deque
 from functools import lru_cache
+from itertools import repeat
 from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -646,6 +647,11 @@ class Permuter:
             Exact permutation when col_to_permute != 0 has not been implemented.
         """
 
+        if col_to_permute != 0 and self._exact is True:
+            raise NotImplementedError(
+                "Exact permutation only available for col_to_permute = 0."
+            )
+
         # permute values in this copy so that original array
         # is untouched
         cached_X = X.copy()
@@ -666,29 +672,27 @@ class Permuter:
             for low, high in zip(supercluster_idxs[:-1], supercluster_idxs[1:])
         )
 
-        if col_to_permute != 0 and self._exact is True:
-            raise NotImplementedError(
-                "Exact permutation only available for col_to_permute = 0."
-            )
-
         col_values = permutation_matrix[:, col_to_permute]
 
-        permutation_generator = _shuffle_generator_factory(
-            col_values, supercluster_idxs, subclusters, self._exact, self._n_resamples
+        permutation_pipeline = _shuffle_generator_factory(
+            supercluster_idxs, subclusters, self._exact
         )
 
-        for i, permutation in zip(range(self._n_resamples), permutation_generator):
-            cached_X[:, col_to_permute] = permutation
-            yield cached_X.copy()
+        permutation_pipeline.add_component(
+            (_place_permutation, {"target_array": cached_X, "col_idx": col_to_permute})
+        )
+
+        for i, permuted_design_matrix in zip(
+            range(self._n_resamples), permutation_pipeline.process(col_values)
+        ):
+            yield permuted_design_matrix
 
 
 def _shuffle_generator_factory(
-    col_values: Tuple,
     supercluster_idxs: Tuple,
     subclusters: Tuple,
     exact: bool,
-    n_resamples: int,
-):
+) -> Pipeline:
     """This factory function generates a permutation algorithm per our needs.
 
     Parameters
@@ -698,32 +702,51 @@ def _shuffle_generator_factory(
     subclusters : Tuple
     exact : bool
     """
-    permutation_generator = Pipeline()
+    permutation_pipeline = Pipeline()
     if exact is True:
-        permutation_generator.add_component(msp)
+        permutation_pipeline.add_component(msp)
     else:
-        permutation_generator.add_component(
+        permutation_pipeline.add_component(
             (
-                _random_return,
-                {"stratification": supercluster_idxs, "n_resamples": n_resamples},
+                lambda col_to_permute, stratification: (
+                    nb_strat_shuffle(col_to_permute, stratification)
+                    for _ in repeat(None)
+                ),
+                {"stratification": supercluster_idxs},
             )
         )
     if not np.all(subclusters == 1):
-        permutation_generator.add_component(
+        permutation_pipeline.add_component(
             (
                 lambda generator, counts: (_repeat(x, counts) for x in generator),
                 {"counts": subclusters},
             )
         )
 
-    return permutation_generator.process(col_values)
+    return permutation_pipeline
 
 
-def _random_return(
-    col_to_permute: np.ndarray, stratification: Tuple[Tuple[int]], n_resamples: int
-) -> Callable:
-    """Generator that performs a stratified shuffle on a column."""
+def _place_permutation(
+    permutation_generator: Generator[Iterable, None, None],
+    target_array: np.ndarray,
+    col_idx: int,
+):
+    """_summary_
 
-    return (
-        nb_strat_shuffle(col_to_permute, stratification) for i in range(n_resamples)
-    )
+    Parameters
+    ----------
+    permutation_generator : Generator[Iterable, None, None]
+        _description_
+    target_array : np.ndarray
+        _description_
+    col_idx : int
+        _description_
+
+    Yields
+    ------
+    _type_
+        _description_
+    """
+    for permutation in permutation_generator:
+        target_array[:, col_idx] = permutation
+        yield target_array.copy()
