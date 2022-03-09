@@ -15,7 +15,7 @@ class TestIDClusters(unittest.TestCase):
 
         for hierarchy in hierarchies:
             sim.fit(hierarchy)
-            ret = resampling._id_cluster_counts(sim.container[:, :-2])
+            ret = resampling.id_cluster_counts(sim.container[:, :-2])
             for idx, level in enumerate(ret):
                 if isinstance(hierarchy[idx], int):
                     for v in iter(level):
