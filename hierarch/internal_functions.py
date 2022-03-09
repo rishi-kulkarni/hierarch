@@ -1,3 +1,4 @@
+from typing import Iterable
 import numba as nb
 import numpy as np
 
@@ -221,7 +222,21 @@ def nb_strat_shuffle(arr, stratification):
     return arr
 
 
-nb.jit(nopython=True, cache=True)
+@nb.jit(nopython=True)
+def nb_chain_from_iterable(iterable: Iterable) -> np.ndarray:
+    """Equivalent to itertools.chain.from_iterable, but produces a
+    numpy array instead of a generator. This is primarily because
+    numba has a memory leak associated with generator functions.
+
+    Parameters
+    ----------
+    iterable : Iterable
+
+    Returns
+    -------
+    np.ndarray
+    """
+    return np.array([x for arr in iterable for x in arr])
 
 
 def msp(items):

@@ -1,22 +1,22 @@
 from collections import deque
 from functools import lru_cache
-from itertools import repeat
+from itertools import islice
 from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
-from numba import jit, types
-from numba.extending import overload, register_jitable
+from numba import jit
 
 from .internal_functions import (
     _repeat,
     msp,
     nb_strat_shuffle,
     set_numba_random_state,
+    nb_chain_from_iterable,
 )
 from .pipeline import Pipeline
 
 
-def _id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
+def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
     """Identifies the hierarchy in a design matrix.
 
     Constructs a tuple of arrays corresponding describing the hierarchy
@@ -70,6 +70,19 @@ def _id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
     ((2,), (3, 2), (1, 1, 1, 1, 2))
 
     """
+
+    # turn the design matrix into a tuple so lru_cache can be used
+    # this presumes a 2D matrix, but all design matrices are
+    hashable = tuple(map(tuple, design.tolist()))
+
+    return _id_cluster_impl(hashable)
+
+
+@lru_cache
+def _id_cluster_impl(design: Tuple[Tuple]) -> Tuple[Tuple]:
+    # convert tuple back to array
+    design = np.array(design)
+
     # deque is nice because we're traversing the hierarchy backwards
     cluster_desc = deque()
 
@@ -352,19 +365,17 @@ class Bootstrapper:
 
         resampling_plan = tuple(
             (cluster, False) if idx in skip else (cluster, True)
-            for idx, cluster in enumerate(_id_cluster_counts(X))
+            for idx, cluster in enumerate(id_cluster_counts(X))
         )
-
-        sampler = self.bootstrap_sampler
 
         bootstrap_pipeline = Pipeline()
         bootstrap_pipeline.add_component(
             (
                 _repeat_func,
-                {"func": sampler, "start": start_col, "repetitions": self._n_resamples},
+                {"func": self.bootstrap_sampler},
             )
         )
-
+        bootstrap_pipeline.add_component((_islice_wrapper, {"stop": self._n_resamples}))
         if y is None:
             pass
 
@@ -377,7 +388,7 @@ class Bootstrapper:
                 lambda generator: ((X, y[weights]) for weights in generator)
             )
 
-        yield from bootstrap_pipeline.process(resampling_plan)
+        yield from bootstrap_pipeline.process(resampling_plan[start_col:])
 
 
 def _validate(*arrs):
@@ -404,73 +415,32 @@ def _validate(*arrs):
             )
 
 
-def _concatenate_1D_from_list(arr_list: np.ndarray) -> np.ndarray:
-    """Helper function to do np.concatenate from a list of arguments.
-
-    Numba doesn't support this because it doesn't really work well,
-    but if we are only passing in lists that are made inside jitted
-    functions, it's okay."""
-    out = np.empty(shape=sum([arr.size for arr in arr_list]))
-    put_idx = 0
-    for arr in arr_list:
-        out[put_idx : put_idx + arr.size] = arr
-        put_idx += arr.size
-
-    return out
-
-
-@register_jitable
-def _do_conc_impl(arr_list, dtype):
-    out = np.empty(shape=sum([arr.size for arr in arr_list]), dtype=dtype)
-    put_idx = 0
-    for arr in arr_list:
-        out[put_idx : put_idx + arr.size] = arr
-        put_idx += arr.size
-    return out
-
-
-@overload(_concatenate_1D_from_list)
-def ol_concatenate_1D_from_list(arr_list):
-    if isinstance(arr_list[0].dtype, types.Integer):
-
-        def conc_1D_impl(arr_list):
-            return _do_conc_impl(arr_list, dtype=np.int64)
-
-    else:
-
-        def conc_1D_impl(arr_list):
-            return _do_conc_impl(arr_list, dtype=np.float64)
-
-    return conc_1D_impl
-
-
 @lru_cache
 def _bootstrapper_factory(kind: str) -> Callable:
     """Factory function that returns the appropriate transform()."""
 
     # these helper functions wrap the distributions so that they take the same arguments
     @jit(nopython=True)
-    def _multinomial_distribution(weights, v):
-        return np.random.multinomial(v * weights, [1 / v] * v)
+    def _multinomial_distribution(weight, v):
+        return np.random.multinomial(v * weight, np.full(v, 1 / v))
 
     @jit(nopython=True)
-    def _dirichlet_distribution(weights, v):
-        return np.random.dirichlet([1] * v, size=None) * weights * v
+    def _dirichlet_distribution(weight, v):
+        return np.random.dirichlet(np.ones(v), size=None) * weight * v
 
     @jit(nopython=True)
-    def _resample_weights(resampling_plan, start):
+    def _resample_weights(resampling_plan):
         # at the start, all samples are weighted equally
-        weights = np.array([1 for i in resampling_plan[start][0]], dtype=_weight_dtype)
+        weights = np.array([1 for i in resampling_plan[0][0]], dtype=_weight_dtype)
 
-        for idx, (subclusters, to_resample) in enumerate(resampling_plan):
-            if idx < start:
-                continue
-            elif not to_resample:
+        for subclusters, to_resample in resampling_plan:
+
+            if not to_resample:
                 # expand the old weights to fit into the column
                 weights = np.repeat(weights, subclusters)
             else:
                 # generate new weights from the distribution we're using
-                weights = _concatenate_1D_from_list(
+                weights = nb_chain_from_iterable(
                     [_dist(weights[idx], v) for idx, v in enumerate(subclusters)]
                 )
         return weights
@@ -485,15 +455,15 @@ def _bootstrapper_factory(kind: str) -> Callable:
     if kind == "indexes":
 
         @jit(nopython=True)
-        def _bootstrapper_impl(resampling_plan, start):
-            weights = _resample_weights(resampling_plan, start)
+        def _bootstrapper_impl(resampling_plan):
+            weights = _resample_weights(resampling_plan)
             return _weights_to_index(weights)
 
     else:
 
         @jit(nopython=True)
-        def _bootstrapper_impl(resampling_plan, start):
-            return _resample_weights(resampling_plan, start)
+        def _bootstrapper_impl(resampling_plan):
+            return _resample_weights(resampling_plan)
 
     return _bootstrapper_impl
 
@@ -664,23 +634,9 @@ class Permuter:
         # is untouched
         cached_X = X.copy()
 
-        # we will actually be permuting the unique rows in this submatrix,
-        # then duplicating any rows that contain subclusters
-        permutation_matrix, subclusters = np.unique(
-            X[:, : col_to_permute + 2], axis=0, return_counts=True
+        col_values, subclusters, supercluster_idxs = _permutation_design_info(
+            cached_X, col_to_permute
         )
-        # if the target column is nested within another level, we have
-        # to stratify the fisher-yates shuffle
-        _, supercluster_idxs = np.unique(
-            permutation_matrix[:, :col_to_permute], axis=0, return_index=True
-        )
-        supercluster_idxs = np.append(supercluster_idxs, len(permutation_matrix))
-        supercluster_idxs = tuple(
-            (low, high)
-            for low, high in zip(supercluster_idxs[:-1], supercluster_idxs[1:])
-        )
-
-        col_values = permutation_matrix[:, col_to_permute]
 
         permutation_pipeline = _shuffle_generator_factory(
             supercluster_idxs, subclusters, self._exact, self._n_resamples
@@ -690,7 +646,63 @@ class Permuter:
             (_place_permutation, {"target_array": cached_X, "col_idx": col_to_permute})
         )
 
-        yield from permutation_pipeline.process(col_values)
+        yield from permutation_pipeline.process(np.array(col_values))
+
+
+def _permutation_design_info(
+    design_matrix: Tuple[Tuple], col_to_permute: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """This function produces the column to permute, any subclusters
+    it contains, and any superclusters that contain it. This information
+    is necessary for cluster-aware permutation.
+
+    Delegates computation to a function with an lru_cache, which allows
+    the permutation generator to be quickly reconstructed for nested
+    resampling plans (say, performing a permutation test on each of many
+    bootstrap samples).
+
+    Parameters
+    ----------
+    design_matrix : Tuple[Tuple]
+    col_to_permute : int
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray, np.ndarray]
+        column to permute, subclusters, supercluster indexes
+    """
+    # makes array hashable, assumes its 2D
+    hashable_design = tuple(map(tuple, design_matrix))
+
+    return _permutation_design_info_impl(hashable_design, col_to_permute)
+
+
+@lru_cache
+def _permutation_design_info_impl(
+    design: Tuple[Tuple], col_to_permute: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+    design = np.array(design)
+
+    # we will actually be permuting the unique rows in this submatrix,
+    # then duplicating any rows that contain subclusters
+    permutation_matrix, subclusters = np.unique(
+        design[:, : col_to_permute + 2], axis=0, return_counts=True
+    )
+    # if the target column is nested within another level, we have
+    # to stratify the fisher-yates shuffle
+    _, supercluster_idxs = np.unique(
+        permutation_matrix[:, :col_to_permute], axis=0, return_index=True
+    )
+    supercluster_idxs = np.append(supercluster_idxs, len(permutation_matrix))
+    supercluster_idxs = tuple(
+        (low, high) for low, high in zip(supercluster_idxs[:-1], supercluster_idxs[1:])
+    )
+
+    # need to make this immutable
+    col_values = tuple(permutation_matrix[:, col_to_permute].tolist())
+
+    return col_values, subclusters, supercluster_idxs
 
 
 def _shuffle_generator_factory(
@@ -718,10 +730,10 @@ def _shuffle_generator_factory(
                 {
                     "func": nb_strat_shuffle,
                     "stratification": supercluster_idxs,
-                    "repetitions": n_resamples,
                 },
             )
         )
+        permutation_pipeline.add_component((_islice_wrapper, {"stop": n_resamples}))
     if not np.all(subclusters == 1):
         permutation_pipeline.add_component(
             (
@@ -733,10 +745,16 @@ def _shuffle_generator_factory(
     return permutation_pipeline
 
 
-def _repeat_func(first_argument, func, repetitions=None, **kwargs):
+def _repeat_func(first_argument, func, **kwargs):
     """Utility function that repeats a function on a set
     of arguments infinitely."""
-    return (func(first_argument, **kwargs) for _ in repeat(None, times=repetitions))
+    while True:
+        yield func(first_argument, **kwargs)
+
+
+def _islice_wrapper(iterable, stop):
+    """Wrapper to make islice take a keyword argument."""
+    return islice(iterable, stop)
 
 
 def _place_permutation(
