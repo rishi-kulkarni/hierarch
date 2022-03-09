@@ -761,22 +761,18 @@ def _place_permutation(
     permutation_generator: Generator[Iterable, None, None],
     target_array: np.ndarray,
     col_idx: int,
-):
-    """_summary_
+) -> np.ndarray:
+    """Place permuted column in target array and yields a copy
 
     Parameters
     ----------
     permutation_generator : Generator[Iterable, None, None]
-        _description_
     target_array : np.ndarray
-        _description_
     col_idx : int
-        _description_
 
     Yields
     ------
-    _type_
-        _description_
+    np.ndarray
     """
     for permutation in permutation_generator:
         target_array[:, col_idx] = permutation
