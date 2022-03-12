@@ -1,7 +1,7 @@
 from collections import deque
 from functools import lru_cache
 from itertools import islice
-from typing import Callable, Generator, Iterable, List, Optional, Tuple, Union
+from typing import Callable, Generator, Iterable, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 from numba import jit
@@ -368,128 +368,20 @@ class Bootstrapper:
             for idx, cluster in enumerate(id_cluster_counts(X))
         )
 
-        bootstrap_pipeline = Pipeline()
-        bootstrap_pipeline.add_component(
-            (
-                _repeat_func,
-                {"func": self.bootstrap_sampler},
-            )
+        bootstrap_pipeline = Pipeline(
+            components=[
+                (_repeat_func, {"func": self.bootstrap_sampler}),
+                (_islice_wrapper, {"stop": self._n_resamples}),
+            ]
         )
-        bootstrap_pipeline.add_component((_islice_wrapper, {"stop": self._n_resamples}))
-        if y is None:
-            pass
 
-        elif self._kind == "indexes":
-            bootstrap_pipeline.add_component(
-                lambda generator: ((X[indexes], y[indexes]) for indexes in generator)
-            )
-        else:
-            bootstrap_pipeline.add_component(
-                lambda generator: ((X, y[weights]) for weights in generator)
-            )
+        if y is not None:
+            if self._kind == "indexes":
+                bootstrap_pipeline.add_component((_reindex, {"X": X, "y": y}))
+            else:
+                bootstrap_pipeline.add_component((_reweight, {"X": X, "y": y}))
 
         yield from bootstrap_pipeline.process(resampling_plan[start_col:])
-
-
-def _validate(*arrs):
-    """Helper function to validate that incoming arrays are numeric numpy arrays.
-
-    Raises
-    ------
-    ValueError
-        Raised if any array contains non-numeric data.
-    AttributeError
-        Raised if any argument is not a numpy array.
-    """
-    for arr in arrs:
-        if arr is None:
-            continue
-        try:
-            if not np.issubdtype(arr.dtype, np.number):
-                raise ValueError(
-                    "Bootstrapper can only handle numeric datatypes. Please pre-process your data."
-                )
-        except AttributeError:
-            raise AttributeError(
-                "Bootstrapper can only handle numpy arrays. Please pre-process your data."
-            )
-
-
-@lru_cache
-def _bootstrapper_factory(kind: str) -> Callable:
-    """Factory function that returns the appropriate transform()."""
-
-    # these helper functions wrap the distributions so that they take the same arguments
-    @jit(nopython=True)
-    def _multinomial_distribution(weight, v):
-        return np.random.multinomial(v * weight, np.full(v, 1 / v))
-
-    @jit(nopython=True)
-    def _dirichlet_distribution(weight, v):
-        return np.random.dirichlet(np.ones(v), size=None) * weight * v
-
-    @jit(nopython=True)
-    def _resample_weights(resampling_plan):
-        # at the start, all samples are weighted equally
-        weights = np.array([1 for i in resampling_plan[0][0]], dtype=_weight_dtype)
-
-        for subclusters, to_resample in resampling_plan:
-
-            if not to_resample:
-                # expand the old weights to fit into the column
-                weights = np.repeat(weights, subclusters)
-            else:
-                # generate new weights from the distribution we're using
-                weights = nb_chain_from_iterable(
-                    [_dist(weights[idx], v) for idx, v in enumerate(subclusters)]
-                )
-        return weights
-
-    _KIND_DISPATCHER = {
-        "weights": (np.int64, _multinomial_distribution),
-        "indexes": (np.int64, _multinomial_distribution),
-        "bayesian": (np.float64, _dirichlet_distribution),
-    }
-    _weight_dtype, _dist = _KIND_DISPATCHER[kind]
-
-    if kind == "indexes":
-
-        @jit(nopython=True)
-        def _bootstrapper_impl(resampling_plan):
-            weights = _resample_weights(resampling_plan)
-            return _weights_to_index(weights)
-
-    else:
-
-        @jit(nopython=True)
-        def _bootstrapper_impl(resampling_plan):
-            return _resample_weights(resampling_plan)
-
-    return _bootstrapper_impl
-
-
-@jit(nopython=True)
-def _weights_to_index(weights):
-    """Converts a 1D array of integer weights to indices.
-
-    Equivalent to np.array(list(range(n))).repeat(weights).
-
-    Parameters
-    ----------
-    weights : array-like of ints
-
-    Returns
-    -------
-    indexes: array-like of ints
-    """
-
-    indexes = np.empty(weights.sum(), dtype=np.int64)
-    spot = 0
-    for i, v in enumerate(weights):
-        for j in range(v):
-            indexes[spot] = i
-            spot += 1
-    return indexes
 
 
 class Permuter:
@@ -745,6 +637,83 @@ def _shuffle_generator_factory(
     return permutation_pipeline
 
 
+@lru_cache
+def _bootstrapper_factory(kind: str) -> Callable:
+    """Factory function that returns the appropriate transform()."""
+
+    # these helper functions wrap the distributions so that they take the same arguments
+    @jit(nopython=True)
+    def _multinomial_distribution(weight, v):
+        return np.random.multinomial(v * weight, np.full(v, 1 / v))
+
+    @jit(nopython=True)
+    def _dirichlet_distribution(weight, v):
+        return np.random.dirichlet(np.ones(v), size=None) * weight * v
+
+    @jit(nopython=True)
+    def _resample_weights(resampling_plan):
+        # at the start, all samples are weighted equally
+        weights = np.array([1 for i in resampling_plan[0][0]], dtype=_weight_dtype)
+
+        for subclusters, to_resample in resampling_plan:
+
+            if not to_resample:
+                # expand the old weights to fit into the column
+                weights = np.repeat(weights, subclusters)
+            else:
+                # generate new weights from the distribution we're using
+                weights = nb_chain_from_iterable(
+                    [_dist(weights[idx], v) for idx, v in enumerate(subclusters)]
+                )
+        return weights
+
+    _KIND_DISPATCHER = {
+        "weights": (np.int64, _multinomial_distribution),
+        "indexes": (np.int64, _multinomial_distribution),
+        "bayesian": (np.float64, _dirichlet_distribution),
+    }
+    _weight_dtype, _dist = _KIND_DISPATCHER[kind]
+
+    if kind == "indexes":
+
+        @jit(nopython=True)
+        def _bootstrapper_impl(resampling_plan):
+            weights = _resample_weights(resampling_plan)
+            return _weights_to_index(weights)
+
+    else:
+
+        @jit(nopython=True)
+        def _bootstrapper_impl(resampling_plan):
+            return _resample_weights(resampling_plan)
+
+    return _bootstrapper_impl
+
+
+def _validate(*arrs):
+    """Helper function to validate that incoming arrays are numeric numpy arrays.
+
+    Raises
+    ------
+    ValueError
+        Raised if any array contains non-numeric data.
+    AttributeError
+        Raised if any argument is not a numpy array.
+    """
+    for arr in arrs:
+        if arr is None:
+            continue
+        try:
+            if not np.issubdtype(arr.dtype, np.number):
+                raise ValueError(
+                    "Bootstrapper can only handle numeric datatypes. Please pre-process your data."
+                )
+        except AttributeError:
+            raise AttributeError(
+                "Bootstrapper can only handle numpy arrays. Please pre-process your data."
+            )
+
+
 def _repeat_func(first_argument, func, **kwargs):
     """Utility function that repeats a function on a set
     of arguments infinitely."""
@@ -777,3 +746,41 @@ def _place_permutation(
     for permutation in permutation_generator:
         target_array[:, col_idx] = permutation
         yield target_array.copy()
+
+
+def _reindex(
+    index_generator: Iterator[np.ndarray], X: np.ndarray, y: np.ndarray
+) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+    """Pipeline component that reindexes X and y using indexes pulled from index_generator."""
+    yield from ((X[indexes], y[indexes]) for indexes in index_generator)
+
+
+def _reweight(
+    weight_generator: Iterator[np.ndarray], X: np.ndarray, y: np.ndarray
+) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+    """Pipeline component that reweights y using weights pulled from weight_generator."""
+    yield from ((X, y * weights) for weights in weight_generator)
+
+
+@jit(nopython=True)
+def _weights_to_index(weights):
+    """Converts a 1D array of integer weights to indices.
+
+    Equivalent to np.array(list(range(n))).repeat(weights).
+
+    Parameters
+    ----------
+    weights : array-like of ints
+
+    Returns
+    -------
+    indexes: array-like of ints
+    """
+
+    indexes = np.empty(weights.sum(), dtype=np.int64)
+    spot = 0
+    for i, v in enumerate(weights):
+        for j in range(v):
+            indexes[spot] = i
+            spot += 1
+    return indexes

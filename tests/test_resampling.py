@@ -29,7 +29,7 @@ class TestBootstrapper(unittest.TestCase):
     def setUp(self):
         sim = DataSimulator([[stats.norm], [stats.norm], [stats.norm]])
         sim.fit([2, 3, 3])
-        self.data_1 = sim.generate()
+        self.X = sim.generate()[:, :-2]
 
     def test_seeding(self):
         """
@@ -37,10 +37,10 @@ class TestBootstrapper(unittest.TestCase):
         """
 
         boot_1 = resampling.Bootstrapper(n_resamples=10, random_state=1, kind="weights")
-        test_1_list = [sample for sample in boot_1.resample(self.data_1)]
+        test_1_list = [sample for sample in boot_1.resample(self.X)]
 
         boot_2 = resampling.Bootstrapper(n_resamples=10, random_state=1, kind="weights")
-        test_2_list = [sample for sample in boot_2.resample(self.data_1)]
+        test_2_list = [sample for sample in boot_2.resample(self.X)]
 
         for test_1, test_2 in zip(
             test_1_list,
@@ -48,7 +48,7 @@ class TestBootstrapper(unittest.TestCase):
         ):
             assert_equal(test_1, test_2)
 
-    def test_efron_bootstrapper(self):
+    def test_efron_bootstrapper_weights(self):
         """
         Tests the Efron bootstrap "contract" - the final weights should sum
         to the sum of the original weights within each column.
@@ -59,14 +59,77 @@ class TestBootstrapper(unittest.TestCase):
         be two groups of weights that sum to 9, etc.
         """
         boot = resampling.Bootstrapper(n_resamples=10, kind="weights")
-        X = self.data_1[:, :-2]
+
         starts = (0, 1, 2)
         for start in starts:
             _, index_bins, bin_sums = np.unique(
-                X[:, :start], axis=0, return_index=True, return_counts=True
+                self.X[:, :start], axis=0, return_index=True, return_counts=True
             )
-            for test in boot.resample(X, start_col=start):
+            for test in boot.resample(self.X, start_col=start):
                 generated_bin_sums = np.add.reduceat(test, index_bins)
+                assert_equal(generated_bin_sums, bin_sums)
+
+    def test_efron_bootstrapper_weights_with_y(self):
+        """
+        Tests the Efron bootstrap "contract" - the final weights should sum
+        to the sum of the original weights within each column.
+
+        Checks that sums of weights are as expected based on what columns
+        are being resampled, i.e. if starting at column 0 in this test,
+        all weights should sum to 18. If starting at column 1, there should
+        be two groups of weights that sum to 9, etc.
+        """
+        boot = resampling.Bootstrapper(n_resamples=10, kind="weights")
+        y = np.array([1 for row in self.X])
+
+        starts = (0, 1, 2)
+        for start in starts:
+            _, index_bins, bin_sums = np.unique(
+                self.X[:, :start], axis=0, return_index=True, return_counts=True
+            )
+            for design, reweighted_y in boot.resample(self.X, y, start_col=start):
+                generated_bin_sums = np.add.reduceat(reweighted_y, index_bins)
+                assert_equal(generated_bin_sums, bin_sums)
+
+    def test_efron_bootstrapper_indexes(self):
+        """
+        Tests the Efron bootstrap "contract" - counts of unique values of
+        indices should sum to the the original weights within each column.
+        """
+        boot = resampling.Bootstrapper(n_resamples=10, kind="indexes")
+
+        starts = (0, 1, 2)
+        for start in starts:
+            _, index_bins, bin_sums = np.unique(
+                self.X[:, :start], axis=0, return_index=True, return_counts=True
+            )
+            index_bins = np.append(index_bins, len(self.X))
+            for test in boot.resample(self.X, start_col=start):
+                generated_bin_sums = [
+                    np.sum((test >= low) & (test < high))
+                    for low, high in zip(index_bins[:-1], index_bins[1:])
+                ]
+                assert_equal(generated_bin_sums, bin_sums)
+
+    def test_efron_bootstrapper_indexes_with_y(self):
+        """
+        Tests the Efron bootstrap "contract" - counts of unique values of
+        indices should sum to the the original weights within each column.
+        """
+        boot = resampling.Bootstrapper(n_resamples=10, kind="indexes")
+
+        y = np.array([idx for idx, row in enumerate(self.X)])
+        starts = (0, 1, 2)
+        for start in starts:
+            _, index_bins, bin_sums = np.unique(
+                self.X[:, :start], axis=0, return_index=True, return_counts=True
+            )
+            index_bins = np.append(index_bins, len(self.X))
+            for design, reindexed_y in boot.resample(self.X, y, start_col=start):
+                generated_bin_sums = [
+                    np.sum((reindexed_y >= low) & (reindexed_y < high))
+                    for low, high in zip(index_bins[:-1], index_bins[1:])
+                ]
                 assert_equal(generated_bin_sums, bin_sums)
 
     def test_bayesian_bootstrapper(self):
@@ -76,14 +139,36 @@ class TestBootstrapper(unittest.TestCase):
         assert_almost_equal because bayesian bootstrap weights are floats.
         """
         boot = resampling.Bootstrapper(n_resamples=10, kind="bayesian")
-        X = self.data_1[:, :-2]
+
         starts = (0, 1, 2)
         for start in starts:
             _, index_bins, bin_sums = np.unique(
-                X[:, :start], axis=0, return_index=True, return_counts=True
+                self.X[:, :start], axis=0, return_index=True, return_counts=True
             )
-            for test in boot.resample(X, start_col=start):
+            for test in boot.resample(self.X, start_col=start):
                 generated_bin_sums = np.add.reduceat(test, index_bins)
+                assert_almost_equal(generated_bin_sums, bin_sums)
+
+    def test_bayesian_bootstrapper_weights_with_y(self):
+        """
+        Tests the Efron bootstrap "contract" - the final weights should sum
+        to the sum of the original weights within each column.
+
+        Checks that sums of weights are as expected based on what columns
+        are being resampled, i.e. if starting at column 0 in this test,
+        all weights should sum to 18. If starting at column 1, there should
+        be two groups of weights that sum to 9, etc.
+        """
+        boot = resampling.Bootstrapper(n_resamples=10, kind="bayesian")
+
+        y = np.array([1 for row in self.X])
+        starts = (0, 1, 2)
+        for start in starts:
+            _, index_bins, bin_sums = np.unique(
+                self.X[:, :start], axis=0, return_index=True, return_counts=True
+            )
+            for design, reweighted_y in boot.resample(self.X, y, start_col=start):
+                generated_bin_sums = np.add.reduceat(reweighted_y, index_bins)
                 assert_almost_equal(generated_bin_sums, bin_sums)
 
     def test_bootstrapper_exceptions(self):
@@ -100,21 +185,21 @@ class TestBootstrapper(unittest.TestCase):
         )
 
         with self.assertRaises(AttributeError) as raises:
-            next(boot.resample(pd.DataFrame(self.data_1)))
+            next(boot.resample(pd.DataFrame(self.X)))
         self.assertIn(
             "Bootstrapper can only handle numpy arrays. Please pre-process your data.",
             str(raises.exception),
         )
 
         with self.assertRaises(IndexError) as raises:
-            next(boot.resample(self.data_1, skip=[2.3]))
+            next(boot.resample(self.X, skip=[2.3]))
         self.assertIn(
             "skip contains invalid column indexes for X:",
             str(raises.exception),
         )
 
         with self.assertRaises(IndexError) as raises:
-            next(boot.resample(self.data_1, skip=[5]))
+            next(boot.resample(self.X, skip=[5]))
         self.assertIn(
             "skip contains invalid column indexes for X:", str(raises.exception)
         )
