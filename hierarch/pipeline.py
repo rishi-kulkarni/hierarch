@@ -12,13 +12,10 @@ class Pipeline:
     """
 
     def __init__(
-        self, pipeline_components: Optional[List[Tuple[Callable, Dict]]] = None
+        self, components: Optional[List[Tuple[Callable, Dict]]] = None
     ) -> None:
-        if pipeline_components is not None:
-            self._pipeline = [
-                tuple((component, {})) if isinstance(component, Callable) else component
-                for component in pipeline_components
-            ]
+        if components is not None:
+            self._pipeline = components
         else:
             self._pipeline = []
 
