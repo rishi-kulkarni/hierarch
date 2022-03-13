@@ -291,7 +291,3 @@ class TestPermuter(unittest.TestCase):
             "Exact permutation only available for col_to_permute = 0.",
             str(raises.exception),
         )
-
-
-if __name__ == "__main__":
-    unittest.main()
