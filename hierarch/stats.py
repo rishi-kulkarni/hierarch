@@ -1,13 +1,12 @@
-from os import X_OK
 import numpy as np
 from numba import jit
 import math
 from itertools import combinations
 import pandas as pd
 from hierarch.internal_functions import (
-    GroupbyMean,
     bivar_central_moment,
 )
+from hierarch.regression_utils import GroupbyMean
 from hierarch.resampling import Bootstrapper, Permuter
 from warnings import warn, simplefilter
 from functools import lru_cache
