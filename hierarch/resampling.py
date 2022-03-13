@@ -44,7 +44,7 @@ def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
     (5, 1)
 
     >>> id_cluster_counts(design)
-    ((5,), (1, 1, 1, 1, 1))
+    (array([5]), array([1, 1, 1, 1, 1]))
 
     This reflects the words we used to describe the matrix - there are 5 x-values,
     each of which corresponds to a single y-value. This approach can describe
@@ -67,7 +67,7 @@ def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
     id_cluster_counts returns this description:
 
     >>> id_cluster_counts(design)
-    ((2,), (3, 2), (1, 1, 1, 1, 2))
+    (array([2]), array([3, 2]), array([1, 1, 1, 1, 2]))
 
     """
 
@@ -102,7 +102,7 @@ def _id_cluster_impl(design: Tuple[Tuple]) -> Tuple[Tuple]:
 
 
 class Bootstrapper:
-    """Bootstrapper(n_resamples, random_state=None, kind="weights")
+    """Bootstrapper(n_resamples, kind="weights", random_state=None)
 
     This transformer performs a nested bootstrap on the target data.
     Undefined behavior if the target data is not lexicographically
@@ -141,157 +141,76 @@ class Bootstrapper:
 
     Examples
     --------
-    Generate a simple design matrix with dependent variable always equal to 1.
+    Consider a simple two-level design matrix, with first level units in column 0.
+    Second-level units are nested within first-level units, and observations are
+    nested within second-level units.
 
-    >>> from hierarch.power import DataSimulator
-    >>> paramlist = [[1]*2, [0]*6, [0]*18]
-    >>> hierarchy = [2, 3, 3]
-    >>> datagen = DataSimulator(paramlist)
-    >>> datagen.fit(hierarchy)
-    >>> data = datagen.generate()
-    >>> data
-    array([[1., 1., 1., 1.],
-           [1., 1., 2., 1.],
-           [1., 1., 3., 1.],
-           [1., 2., 1., 1.],
-           [1., 2., 2., 1.],
-           [1., 2., 3., 1.],
-           [1., 3., 1., 1.],
-           [1., 3., 2., 1.],
-           [1., 3., 3., 1.],
-           [2., 1., 1., 1.],
-           [2., 1., 2., 1.],
-           [2., 1., 3., 1.],
-           [2., 2., 1., 1.],
-           [2., 2., 2., 1.],
-           [2., 2., 3., 1.],
-           [2., 3., 1., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 3., 1.]])
+    >>> design = np.array([[1, 1],
+    ...                    [1, 2],
+    ...                    [1, 3],
+    ...                    [2, 4],
+    ...                    [2, 5],
+    ...                    [2, 6]]).repeat(3, axis=0)
+    >>> design
+    array([[1, 1],
+           [1, 1],
+           [1, 1],
+           [1, 2],
+           [1, 2],
+           [1, 2],
+           [1, 3],
+           [1, 3],
+           [1, 3],
+           [2, 4],
+           [2, 4],
+           [2, 4],
+           [2, 5],
+           [2, 5],
+           [2, 5],
+           [2, 6],
+           [2, 6],
+           [2, 6]])
 
-    Generate a bootstrapped sample by resampling column 1, then column 2. The "weights"
-    algorithm multiplies all of the dependent variable values by the resampled weights.
-    Starting at column 1 means that some column 2 clusters might be zero-weighted.
+    Specifying kind="weights" to the Bootstrapper constructor makes the resample method yield
+    the weights of the resampled data.
 
-    >>> boot = Bootstrapper(random_state=1, kind="weights")
-    >>> boot.fit(data, skip=None)
-    >>> boot.transform(data, start=1)
-    array([[1., 1., 1., 3.],
-           [1., 1., 2., 0.],
-           [1., 1., 3., 3.],
-           [1., 2., 1., 0.],
-           [1., 2., 2., 0.],
-           [1., 2., 3., 0.],
-           [1., 3., 1., 1.],
-           [1., 3., 2., 1.],
-           [1., 3., 3., 1.],
-           [2., 1., 1., 0.],
-           [2., 1., 2., 0.],
-           [2., 1., 3., 0.],
-           [2., 2., 1., 1.],
-           [2., 2., 2., 1.],
-           [2., 2., 3., 1.],
-           [2., 3., 1., 2.],
-           [2., 3., 2., 3.],
-           [2., 3., 3., 1.]])
+    >>> boot = Bootstrapper(n_resamples=10, kind="weights", random_state=1)
 
-    Starting at column 2 means that every column 1 cluster has equal weight.
+    One potential resampling plan is generating a bootstrapped sample by resampling second-level
+    units from first-level units, then resampling observations from second-level units. This is
+    done by specifying start_col=1 to the resample method.
 
-    >>> boot = Bootstrapper(random_state=1, kind="weights")
-    >>> boot.fit(data, skip=None)
-    >>> boot.transform(data, start=2)
-    array([[1., 1., 1., 2.],
-           [1., 1., 2., 0.],
-           [1., 1., 3., 1.],
-           [1., 2., 1., 0.],
-           [1., 2., 2., 1.],
-           [1., 2., 3., 2.],
-           [1., 3., 1., 2.],
-           [1., 3., 2., 0.],
-           [1., 3., 3., 1.],
-           [2., 1., 1., 1.],
-           [2., 1., 2., 1.],
-           [2., 1., 3., 1.],
-           [2., 2., 1., 1.],
-           [2., 2., 2., 0.],
-           [2., 2., 3., 2.],
-           [2., 3., 1., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 3., 1.]])
+    >>> resamples = list(boot.resample(design, start_col=1))
+    >>> resamples[0]
+    array([3, 0, 3, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 2, 3, 1])
 
-    Skipping column 2 results in only column 1 clusters being resampled.
+    These weights can be consumed by a function that computes a weighted statistical quantity.
 
-    >>> boot = Bootstrapper(random_state=1, kind="weights")
-    >>> boot.fit(data, skip=[2])
-    >>> boot.transform(data, start=1)
-    array([[1., 1., 1., 2.],
-           [1., 1., 2., 2.],
-           [1., 1., 3., 2.],
-           [1., 2., 1., 0.],
-           [1., 2., 2., 0.],
-           [1., 2., 3., 0.],
-           [1., 3., 1., 1.],
-           [1., 3., 2., 1.],
-           [1., 3., 3., 1.],
-           [2., 1., 1., 0.],
-           [2., 1., 2., 0.],
-           [2., 1., 3., 0.],
-           [2., 2., 1., 1.],
-           [2., 2., 2., 1.],
-           [2., 2., 3., 1.],
-           [2., 3., 1., 2.],
-           [2., 3., 2., 2.],
-           [2., 3., 3., 2.]])
+    >>> y = np.array([1 for row in design])
+    >>> np.average(y, weights=resamples[0])
+    1.0
 
-    Changing the algorithm to "indexes" gives a more familiar result.
+    Users may be more familiar with bootstrap resamples that return resampled indexes rather than
+    weights. Setting kind="indexes" causes the resample method to yield indexes. Note that the
+    if the random_state is the same, "indexes" and "weights" return the same resampled dataset.
 
-    >>> boot = Bootstrapper(random_state=1, kind="indexes")
-    >>> boot.fit(data, skip=None)
-    >>> boot.transform(data, start=1)
-    array([[1., 1., 1., 1.],
-           [1., 1., 1., 1.],
-           [1., 1., 1., 1.],
-           [1., 1., 3., 1.],
-           [1., 1., 3., 1.],
-           [1., 1., 3., 1.],
-           [1., 3., 1., 1.],
-           [1., 3., 2., 1.],
-           [1., 3., 3., 1.],
-           [2., 2., 1., 1.],
-           [2., 2., 2., 1.],
-           [2., 2., 3., 1.],
-           [2., 3., 1., 1.],
-           [2., 3., 1., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 3., 1.]])
+    >>> boot = Bootstrapper(n_resamples=10, kind="indexes", random_state=1)
+    >>> resamples = list(boot.resample(design, start_col=1))
+    >>> resamples[0]
+    array([ 0,  0,  0,  2,  2,  2,  6,  7,  8, 12, 13, 14, 15, 15, 16, 16, 16,
+           17])
 
-    The Bayesian bootstrap is the same as the Efron bootstrap, but allows
-    the resampled weights to take any real value up to the sum of the original
-    weights in that cluster.
+    Bootstrapper also implements the Bayesian bootstrap, which resamples weights from a dirichlet
+    distribution rather than a multinomial distribution.
 
-    >>> boot = Bootstrapper(random_state=2, kind="bayesian")
-    >>> boot.fit(data, skip=None)
-    >>> boot.transform(data, start=1)
-    array([[1.        , 1.        , 1.        , 0.92438197],
-           [1.        , 1.        , 2.        , 1.65820553],
-           [1.        , 1.        , 3.        , 1.31019207],
-           [1.        , 2.        , 1.        , 3.68556477],
-           [1.        , 2.        , 2.        , 0.782951  ],
-           [1.        , 2.        , 3.        , 0.01428243],
-           [1.        , 3.        , 1.        , 0.03969449],
-           [1.        , 3.        , 2.        , 0.04616013],
-           [1.        , 3.        , 3.        , 0.53856761],
-           [2.        , 1.        , 1.        , 4.4725425 ],
-           [2.        , 1.        , 2.        , 1.83458204],
-           [2.        , 1.        , 3.        , 0.16269176],
-           [2.        , 2.        , 1.        , 0.53223701],
-           [2.        , 2.        , 2.        , 0.37478853],
-           [2.        , 2.        , 3.        , 0.07456895],
-           [2.        , 3.        , 1.        , 0.27616575],
-           [2.        , 3.        , 2.        , 0.11271856],
-           [2.        , 3.        , 3.        , 1.15970489]])
+    >>> boot = Bootstrapper(n_resamples=10, kind="bayesian", random_state=1)
+    >>> resamples = list(boot.resample(design, start_col=1))
+    >>> resamples[0]
+    array([2.30576453e+00, 2.61738579e+00, 2.85140165e+00, 4.78956088e-02,
+           5.69594722e-01, 4.85766407e-01, 3.58185441e-02, 7.73710834e-02,
+           9.00167099e-03, 2.23018979e-01, 1.84193794e-01, 5.87413492e-01,
+           7.80809178e-02, 1.49869223e+00, 6.27871188e+00, 4.41052278e-03,
+           1.08636700e-01, 3.68414832e-02])
 
     """
 
@@ -320,6 +239,12 @@ class Bootstrapper:
             self.bootstrap_sampler = _bootstrapper_factory(kind)
         else:
             raise KeyError("Invalid 'kind' argument.")
+
+    def __repr__(self):
+        return (
+            f"<Bootstrapper(n_resamples={self._n_resamples}, kind={self._kind}, "
+            f"random_state={self._random_generator}>"
+        )
 
     def resample(
         self,
