@@ -16,91 +16,6 @@ from .internal_functions import (
 from .pipeline import Pipeline
 
 
-def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
-    """Identifies the hierarchy in a design matrix.
-
-    Constructs a tuple of arrays corresponding describing the hierarchy
-    in a design matrix. This presumes that the design matrix is organized
-    hierarchically from left to right.
-
-    Parameters
-    ----------
-    design : 2D numeric ndarray
-
-    Returns
-    -------
-    Tuple
-        Each index corresponds to a column index in the design matrix
-        and each value is the number cluster in that column. Subclusters
-        are expressed separately.
-
-    Examples
-    --------
-    Consider a simple design matrix that has one y-value per
-    x-value and no nesting:
-
-    >>> design = np.array([1, 2, 3, 4, 5])[:, None]
-    >>> design.shape
-    (5, 1)
-
-    >>> id_cluster_counts(design)
-    (array([5]), array([1, 1, 1, 1, 1]))
-
-    This reflects the words we used to describe the matrix - there are 5 x-values,
-    each of which corresponds to a single y-value. This approach can describe
-    design matrices of any level of hierarchy:
-
-    >>> design = np.array([[1, 1],
-    ...                    [1, 2],
-    ...                    [1, 3],
-    ...                    [2, 4],
-    ...                    [2, 5],
-    ...                    [2, 5]])
-    >>> design.shape
-    (6, 2)
-
-    This matrix has two first-level x-values, the first of which contains three
-    second-level x-values and the second of which contains two second-level x-values.
-    Finally, each second-level x-value corresponds to a single y-value, except for 5,
-    which corresponds to two y-values.
-
-    id_cluster_counts returns this description:
-
-    >>> id_cluster_counts(design)
-    (array([2]), array([3, 2]), array([1, 1, 1, 1, 2]))
-
-    """
-
-    # turn the design matrix into a tuple so lru_cache can be used
-    # this presumes a 2D matrix, but all design matrices are
-    hashable = tuple(map(tuple, design.tolist()))
-
-    return _id_cluster_impl(hashable)
-
-
-@lru_cache
-def _id_cluster_impl(design: Tuple[Tuple]) -> Tuple[Tuple]:
-    # convert tuple back to array
-    design = np.array(design)
-
-    # deque is nice because we're traversing the hierarchy backwards
-    cluster_desc = deque()
-
-    # the number of clusters in the y-values is just the counts
-    # from np.uniques of the design matrix
-    prior_uniques, final_counts = np.unique(design, axis=0, return_counts=True)
-    cluster_desc.appendleft(final_counts)
-
-    # get the number of clusters in each column of the design matrix
-    for i in range(design.shape[1]):
-        prior_uniques, counts = np.unique(
-            prior_uniques[:, :-1], axis=0, return_counts=True
-        )
-        cluster_desc.appendleft(counts)
-    # return a tuple because it plays nicer with numba
-    return tuple(cluster_desc)
-
-
 class Bootstrapper:
     """Bootstrapper(n_resamples, kind="weights", random_state=None)
 
@@ -212,6 +127,16 @@ class Bootstrapper:
            7.80809178e-02, 1.49869223e+00, 6.27871188e+00, 4.41052278e-03,
            1.08636700e-01, 3.68414832e-02])
 
+    For convenience, the resample method can be called with both X and y, causing the resampled
+    weights/indexes to automatically be applied to both matrices.
+
+    >>> resamples = list(boot.resample(design, y, start_col=1))
+    >>> resampled_X, resampled_y = resamples[0]
+    >>> resampled_y
+    array([1.34926314, 0.59942441, 0.4360995 , 2.75019554, 0.03237446,
+           3.05337544, 0.43723699, 0.05818418, 0.28384635, 0.2745058 ,
+           0.20724543, 0.07763387, 0.01048208, 0.9074077 , 1.06618557,
+           1.99243332, 1.10400974, 3.36009649])
     """
 
     #: ("weights", "indexes", "bayesian) The three possible arguments that
@@ -419,6 +344,12 @@ class Permuter:
             nb_seed = self.random_generator.integers(low=2**32)
             set_numba_random_state(nb_seed)
 
+    def __repr__(self):
+        return (
+            f"<Permuter(n_resamples={self._n_resamples}, exact={self._exact}, "
+            f"random_state={self.random_generator}>"
+        )
+
     def resample(
         self, X: np.ndarray, col_to_permute: int
     ) -> Generator[np.ndarray, None, None]:
@@ -451,7 +382,7 @@ class Permuter:
         # is untouched
         cached_X = X.copy()
 
-        col_values, subclusters, supercluster_idxs = _permutation_design_info(
+        col_values, subclusters, supercluster_idxs = permutation_design_info(
             cached_X, col_to_permute
         )
 
@@ -466,7 +397,92 @@ class Permuter:
         yield from permutation_pipeline.process(np.array(col_values))
 
 
-def _permutation_design_info(
+def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
+    """Identifies the hierarchy in a design matrix.
+
+    Constructs a tuple of arrays corresponding describing the hierarchy
+    in a design matrix. This presumes that the design matrix is organized
+    hierarchically from left to right.
+
+    Parameters
+    ----------
+    design : 2D numeric ndarray
+
+    Returns
+    -------
+    Tuple
+        Each index corresponds to a column index in the design matrix
+        and each value is the number cluster in that column. Subclusters
+        are expressed separately.
+
+    Examples
+    --------
+    Consider a simple design matrix that has one y-value per
+    x-value and no nesting:
+
+    >>> design = np.array([1, 2, 3, 4, 5])[:, None]
+    >>> design.shape
+    (5, 1)
+
+    >>> id_cluster_counts(design)
+    (array([5]), array([1, 1, 1, 1, 1]))
+
+    This reflects the words we used to describe the matrix - there are 5 x-values,
+    each of which corresponds to a single y-value. This approach can describe
+    design matrices of any level of hierarchy:
+
+    >>> design = np.array([[1, 1],
+    ...                    [1, 2],
+    ...                    [1, 3],
+    ...                    [2, 4],
+    ...                    [2, 5],
+    ...                    [2, 5]])
+    >>> design.shape
+    (6, 2)
+
+    This matrix has two first-level x-values, the first of which contains three
+    second-level x-values and the second of which contains two second-level x-values.
+    Finally, each second-level x-value corresponds to a single y-value, except for 5,
+    which corresponds to two y-values.
+
+    id_cluster_counts returns this description:
+
+    >>> id_cluster_counts(design)
+    (array([2]), array([3, 2]), array([1, 1, 1, 1, 2]))
+
+    """
+
+    # turn the design matrix into a tuple so lru_cache can be used
+    # this presumes a 2D matrix, but all design matrices are
+    hashable = tuple(map(tuple, design.tolist()))
+
+    return _id_cluster_impl(hashable)
+
+
+@lru_cache
+def _id_cluster_impl(design: Tuple[Tuple]) -> Tuple[Tuple]:
+    # convert tuple back to array
+    design = np.array(design)
+
+    # deque is nice because we're traversing the hierarchy backwards
+    cluster_desc = deque()
+
+    # the number of clusters in the y-values is just the counts
+    # from np.uniques of the design matrix
+    prior_uniques, final_counts = np.unique(design, axis=0, return_counts=True)
+    cluster_desc.appendleft(final_counts)
+
+    # get the number of clusters in each column of the design matrix
+    for i in range(design.shape[1]):
+        prior_uniques, counts = np.unique(
+            prior_uniques[:, :-1], axis=0, return_counts=True
+        )
+        cluster_desc.appendleft(counts)
+    # return a tuple because it plays nicer with numba
+    return tuple(cluster_desc)
+
+
+def permutation_design_info(
     design_matrix: Tuple[Tuple], col_to_permute: int
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """This function produces the column to permute, any subclusters
