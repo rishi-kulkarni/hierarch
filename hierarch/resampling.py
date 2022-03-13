@@ -504,6 +504,12 @@ def permutation_design_info(
     Tuple[np.ndarray, np.ndarray, np.ndarray]
         column to permute, subclusters, supercluster indexes
     """
+
+    if design_matrix.ndim != 2:
+        raise ValueError(
+            f"design_matrix should be a 2D design matrix, got {design_matrix.ndim} dimensions"
+        )
+
     # makes array hashable, assumes its 2D
     hashable_design = tuple(map(tuple, design_matrix))
 
@@ -567,10 +573,11 @@ def _shuffle_generator_factory(
             )
         )
         permutation_pipeline.add_component((_islice_wrapper, {"stop": n_resamples}))
+
     if not np.all(subclusters == 1):
         permutation_pipeline.add_component(
             (
-                lambda generator, counts: (_repeat(x, counts) for x in generator),
+                _repeat_array,
                 {"counts": subclusters},
             )
         )
@@ -687,6 +694,13 @@ def _place_permutation(
     for permutation in permutation_generator:
         target_array[:, col_idx] = permutation
         yield target_array.copy()
+
+
+def _repeat_array(
+    array_generator: Iterator[np.ndarray], counts: np.ndarray
+) -> Iterator[np.ndarray]:
+    """Pipeline component that calls np.repeat(x, counts) on the output of a generator."""
+    yield from (_repeat(x, counts) for x in array_generator)
 
 
 def _reindex(

@@ -7,29 +7,18 @@ from numpy.testing import assert_almost_equal, assert_equal
 import pandas as pd
 
 
-class TestIDClusters(unittest.TestCase):
-    def test_id_clusters(self):
-        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [2, 3, [10, 11, 5, 6, 4, 3]])
-        parameters = [[stats.norm, 0, 0], [stats.norm, 0, 0], [stats.norm, 0, 0]]
-        sim = DataSimulator(parameters)
-
-        for hierarchy in hierarchies:
-            sim.fit(hierarchy)
-            ret = resampling.id_cluster_counts(sim.container[:, :-2])
-            for idx, level in enumerate(ret):
-                if isinstance(hierarchy[idx], int):
-                    for v in iter(level):
-                        self.assertEqual(v, hierarchy[idx])
-                elif isinstance(hierarchy[idx], list):
-                    for idx_2, v in enumerate(level):
-                        self.assertEqual(hierarchy[idx][idx_2], v)
-
-
 class TestBootstrapper(unittest.TestCase):
     def setUp(self):
         sim = DataSimulator([[stats.norm], [stats.norm], [stats.norm]])
         sim.fit([2, 3, 3])
         self.X = sim.generate()[:, :-2]
+
+    def test_repr(self):
+        boot = resampling.Bootstrapper(n_resamples=10, kind="bayesian", random_state=1)
+        self.assertIn(
+            "<Bootstrapper(n_resamples=10, kind=bayesian, random_state=Generator(PCG64)>",
+            repr(boot),
+        )
 
     def test_seeding(self):
         """
@@ -205,21 +194,16 @@ class TestBootstrapper(unittest.TestCase):
         )
 
 
-class TestWeightstoIndex(unittest.TestCase):
-    def test_weights_to_index(self):
-        """
-        Tests that weights_to_index gives same array as np.arange(weights.size).repeat(weights)
-        """
-        weights = np.random.randint(10, size=10)
-        indexes = resampling._weights_to_index(weights)
-        np_indexes = np.arange(weights.size).repeat(weights)
-        for idx, v in enumerate(indexes):
-            self.assertEqual(v, np_indexes[idx])
-
-
 class TestPermuter(unittest.TestCase):
     def setUp(self):
         self.orig_data = np.arange(100).reshape((50, 2))
+
+    def test_repr(self):
+        permuter = resampling.Permuter(n_resamples=10, exact=False, random_state=1)
+        self.assertIn(
+            "<Permuter(n_resamples=10, exact=False, random_state=Generator(PCG64)>",
+            repr(permuter),
+        )
 
     def test_random_seeding(self):
         """
@@ -291,3 +275,58 @@ class TestPermuter(unittest.TestCase):
             "Exact permutation only available for col_to_permute = 0.",
             str(raises.exception),
         )
+
+
+class TestIDClusters(unittest.TestCase):
+    def test_id_clusters(self):
+        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [2, 3, [10, 11, 5, 6, 4, 3]])
+        parameters = [[stats.norm, 0, 0], [stats.norm, 0, 0], [stats.norm, 0, 0]]
+        sim = DataSimulator(parameters)
+
+        for hierarchy in hierarchies:
+            sim.fit(hierarchy)
+            ret = resampling.id_cluster_counts(sim.container[:, :-2])
+            for idx, level in enumerate(ret):
+                if isinstance(hierarchy[idx], int):
+                    for v in iter(level):
+                        self.assertEqual(v, hierarchy[idx])
+                elif isinstance(hierarchy[idx], list):
+                    for idx_2, v in enumerate(level):
+                        self.assertEqual(hierarchy[idx][idx_2], v)
+
+
+class TestPermutationDesignInfo(unittest.TestCase):
+    def test_design_info(self):
+        design = np.array([[1, 1], [1, 2], [1, 3], [2, 4], [2, 5], [2, 5]])
+
+        col_values, subclusters, supercluster_idxs = resampling.permutation_design_info(
+            design, col_to_permute=0
+        )
+
+        expected_col_values = (1, 1, 1, 2, 2)
+        self.assertEqual(col_values, expected_col_values)
+
+        expected_subclusters = np.array([1, 1, 1, 1, 2])
+        assert_equal(subclusters, expected_subclusters)
+
+        expected_supercluster_idxs = ((0, 5),)
+        self.assertEqual(supercluster_idxs, expected_supercluster_idxs)
+
+    def test_exceptions(self):
+        design = np.array([1, 2, 3])
+
+        with self.assertRaises(ValueError) as ex:
+            resampling.permutation_design_info(design, 0)
+            self.assertIn("design_matrix should be a 2D design matrix", ex.exception)
+
+
+class TestWeightstoIndex(unittest.TestCase):
+    def test_weights_to_index(self):
+        """
+        Tests that weights_to_index gives same array as np.arange(weights.size).repeat(weights)
+        """
+        weights = np.random.randint(10, size=10)
+        indexes = resampling._weights_to_index(weights)
+        np_indexes = np.arange(weights.size).repeat(weights)
+        for idx, v in enumerate(indexes):
+            self.assertEqual(v, np_indexes[idx])
