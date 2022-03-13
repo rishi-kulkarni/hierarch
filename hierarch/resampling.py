@@ -236,7 +236,9 @@ class Bootstrapper:
 
 class Permuter:
 
-    """Class for performing cluster-aware permutation on a target column.
+    """Permuter(n_resamples, exact=False, random_state=None)
+
+    Class for performing cluster-aware permutation on a target column.
 
     Parameters
     ----------
@@ -254,78 +256,76 @@ class Permuter:
 
     Examples
     --------
-    When the column to resample is the first column, Permuter performs an
-    ordinary shuffle.
 
-    >>> from hierarch.power import DataSimulator
-    >>> from hierarch.internal_functions import GroupbyMean
-    >>> paramlist = [[1]*2, [0]*6, [0]*18]
-    >>> hierarchy = [2, 3, 3]
-    >>> datagen = DataSimulator(paramlist)
-    >>> datagen.fit(hierarchy)
-    >>> data = datagen.generate()
-    >>> agg = GroupbyMean()
-    >>> test = agg.fit_transform(data)
-    >>> test
-    array([[1., 1., 1.],
-           [1., 2., 1.],
-           [1., 3., 1.],
-           [2., 1., 1.],
-           [2., 2., 1.],
-           [2., 3., 1.]])
+    >>> design = np.array([[1, 1],
+    ...                    [1, 2],
+    ...                    [1, 3],
+    ...                    [2, 4],
+    ...                    [2, 5],
+    ...                    [2, 6]])
+    >>> design
+    array([[1, 1],
+           [1, 2],
+           [1, 3],
+           [2, 4],
+           [2, 5],
+           [2, 6]])
 
-    Permuter performs an in-place shuffle on the fitted data.
+    If the first column is chosen as the target, Permuter will perform an ordinary shuffle
+    and return the permuted design matrix.
 
-    >>> permute = Permuter(random_state=1)
-    >>> permute.fit(test, col_to_permute=0, exact=False)
-    >>> permute.transform(test)
-    array([[2., 1., 1.],
-           [2., 2., 1.],
-           [1., 3., 1.],
-           [2., 1., 1.],
-           [1., 2., 1.],
-           [1., 3., 1.]])
+    >>> permute = Permuter(n_resamples=10, random_state=1)
+    >>> resamples = list(permute.resample(design, col_to_permute=0))
+    >>> resamples[0]
+    array([[1, 1],
+           [2, 2],
+           [2, 3],
+           [1, 4],
+           [2, 5],
+           [1, 6]])
 
     If exact=True, Permuter will not repeat a permutation until all possible
-    permutations have been exhausted.
+    permutations have been exhausted. For this design matrix, there are only
+    20 possible permutations and we can see that Permuter enumerates all of them.
+    Note that the n_resamples value is overriden when exact=True.
 
-    >>> test = agg.fit_transform(data)
-    >>> permute = Permuter(random_state=1)
-    >>> permute.fit(test, col_to_permute=0, exact=True)
-    >>> permute.transform(test)
-    array([[2., 1., 1.],
-           [2., 2., 1.],
-           [2., 3., 1.],
-           [1., 1., 1.],
-           [1., 2., 1.],
-           [1., 3., 1.]])
-    >>> next(permute.iterator)
-    [1.0, 2.0, 2.0, 2.0, 1.0, 1.0]
-    >>> next(permute.iterator)
-    [2.0, 1.0, 2.0, 2.0, 1.0, 1.0]
+    >>> permute = Permuter(n_resamples=10000, exact=True, random_state=1)
+    >>> resamples = list(permute.resample(design, col_to_permute=0))
+    >>> len(resamples)
+    20
 
-    If the column to permute is not 0, Permuter performs a within-cluster shuffle.
-    Note that values of column 1 were shuffled within their column 0 cluster.
+    Asking Permuter to permute the second column will result in a cluster-aware permutation -
+    that is, second-level units will be shuffled within first-level units. In the following
+    example, note that 1, 2, 3 remain nested in 1, while 4, 5, 6 remain nested in 2.
 
-    >>> test = agg.fit_transform(data)
-    >>> permute = Permuter(random_state=2)
-    >>> permute.fit(test, col_to_permute=1, exact=False)
-    >>> permute.transform(test)
-    array([[1., 1., 1.],
-           [1., 2., 1.],
-           [1., 3., 1.],
-           [2., 2., 1.],
-           [2., 1., 1.],
-           [2., 3., 1.]])
+    >>> permute = Permuter(n_resamples=10, random_state=1)
+    >>> resamples = list(permute.resample(design, col_to_permute=1))
+    >>> resamples[0]
+    array([[1, 1],
+           [1, 3],
+           [1, 2],
+           [2, 5],
+           [2, 4],
+           [2, 6]])
 
-    Exact within-cluster permutations are not implemented, but there are typically
-    too many to be worth attempting.
+    If any values are repeated, Permuter ensures that they are shuffled together.
 
-    >>> permute = Permuter(random_state=2)
-    >>> permute.fit(test, col_to_permute=1, exact=True)
-    Traceback (most recent call last):
-        ...
-    NotImplementedError: Exact permutation only available for col_to_permute = 0.
+    >>> repeated_design = design.repeat(2, axis=0)
+    >>> resamples = list(permute.resample(repeated_design, col_to_permute=0))
+    >>> resamples[0]
+    array([[2, 1],
+           [2, 1],
+           [1, 2],
+           [1, 2],
+           [2, 3],
+           [2, 3],
+           [2, 4],
+           [2, 4],
+           [1, 5],
+           [1, 5],
+           [1, 6],
+           [1, 6]])
+
     """
 
     def __init__(
