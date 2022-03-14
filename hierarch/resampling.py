@@ -9,9 +9,9 @@ from numba import jit
 from .internal_functions import (
     _repeat,
     msp,
+    nb_chain_from_iterable,
     nb_strat_shuffle,
     set_numba_random_state,
-    nb_chain_from_iterable,
 )
 from .pipeline import Pipeline
 
@@ -492,9 +492,9 @@ def _permutation_design_info_impl(
         design[:, : col_to_permute + 2], axis=0, return_counts=True
     )
 
-    # need to make these immutable
+    # need to make this immutable
     col_values = tuple(permutation_matrix[:, col_to_permute].tolist())
-    subclusters = tuple(subclusters.tolist())
+
     # if the target column is nested within another level, we have
     # to stratify the fisher-yates shuffle
     _, supercluster_idxs = np.unique(
@@ -531,8 +531,8 @@ def _shuffle_generator_factory(
             (
                 _repeat_func,
                 {
-                    "times": n_resamples,
                     "func": nb_strat_shuffle,
+                    "times": n_resamples,
                     "stratification": supercluster_idxs,
                 },
             )
@@ -545,7 +545,6 @@ def _shuffle_generator_factory(
                 {"counts": np.array(subclusters)},
             )
         )
-
     return permutation_pipeline
 
 
@@ -637,7 +636,7 @@ def _validate(*arrs):
 def _repeat_func(first_argument, func, times, **kwargs):
     """Utility function that repeats a function on a set
     of arguments a number of times."""
-    yield from (func(first_argument, **kwargs) for _ in repeat(None, times))
+    return (func(first_argument, **kwargs) for _ in repeat(None, times))
 
 
 def _place_permutation(
