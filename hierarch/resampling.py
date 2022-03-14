@@ -1,6 +1,6 @@
 from collections import deque
 from functools import lru_cache
-from itertools import islice
+from itertools import repeat
 from typing import Callable, Generator, Iterable, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
@@ -16,19 +16,33 @@ from .internal_functions import (
 from .pipeline import Pipeline
 
 
-class Bootstrapper:
-    """Bootstrapper(n_resamples, kind="weights", random_state=None)
+def bootstrap(
+    *arrays: np.ndarray,
+    start_col: int = 0,
+    skip: Optional[List[int]] = None,
+    n_resamples: int = 1000,
+    kind: str = "weights",
+    random_state: Union[np.random.Generator, int, None] = None,
+) -> Iterator[Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]]:
+    """
 
-    This transformer performs a nested bootstrap on the target data.
+    Performs a nested bootstrap on the target data.
     Undefined behavior if the target data is not lexicographically
     sorted.
 
     Parameters
     ----------
-    n_resamples: int
-        Number of resamples for Bootstrapper's resample method to generate.
-    random_state : int or numpy.random.Generator instance, optional
-        Seeds the Bootstrapper for reproducibility, by default None
+    *arrays : np.ndarray(s)
+        Arrays to bootstrap. Presumes that the first passed array is
+        the design matrix and the second is the regressand.
+    start_col : int, optional
+        The first column of the design matrix to bootstrap, by default 0
+    skip : _type_, optional
+        Columns to skip in the bootstrap. Skip columns that were sampled
+        without replacement from the prior column, by default None.
+    n_resamples : int
+        Number of resamples for Bootstrapper's resample method to generate,
+        by default 1000.
     kind : { "weights", "bayesian", "indexes" }
         Specifies the bootstrapping algorithm.
 
@@ -40,6 +54,16 @@ class Bootstrapper:
 
         "indexes" generates a set of new indexes for the dataset.
         Mathematically, this is equivalent to demanding integer weights.
+    random_state : int or numpy.random.Generator instance, optional
+        Seeds the Bootstrapper for reproducibility, by default None
+
+    Yields
+    ------
+    Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]
+        If y is not provided, each resample will be a 1D np.ndarray containing
+        resampled weights (or indexes, if kind="indexes"). If y is provided,
+        each resample will be a tuple of X (or reindexed X), reweighted y
+        (or reindexed y) values.
 
     Notes
     -----
@@ -89,13 +113,15 @@ class Bootstrapper:
     Specifying kind="weights" to the Bootstrapper constructor makes the resample method yield
     the weights of the resampled data.
 
-    >>> boot = Bootstrapper(n_resamples=10, kind="weights", random_state=1)
-
     One potential resampling plan is generating a bootstrapped sample by resampling second-level
     units from first-level units, then resampling observations from second-level units. This is
     done by specifying start_col=1 to the resample method.
 
-    >>> resamples = list(boot.resample(design, start_col=1))
+    >>> resamples = list(bootstrap(design,
+    ...                            start_col=1,
+    ...                            n_resamples=10,
+    ...                            kind="weights",
+    ...                            random_state=1))
     >>> resamples[0]
     array([3, 0, 3, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 2, 3, 1])
 
@@ -109,8 +135,11 @@ class Bootstrapper:
     weights. Setting kind="indexes" causes the resample method to yield indexes. Note that the
     if the random_state is the same, "indexes" and "weights" return the same resampled dataset.
 
-    >>> boot = Bootstrapper(n_resamples=10, kind="indexes", random_state=1)
-    >>> resamples = list(boot.resample(design, start_col=1))
+    >>> resamples = list(bootstrap(design,
+    ...                            start_col=1,
+    ...                            n_resamples=10,
+    ...                            kind="indexes",
+    ...                            random_state=1))
     >>> resamples[0]
     array([ 0,  0,  0,  2,  2,  2,  6,  7,  8, 12, 13, 14, 15, 15, 16, 16, 16,
            17])
@@ -118,8 +147,11 @@ class Bootstrapper:
     Bootstrapper also implements the Bayesian bootstrap, which resamples weights from a dirichlet
     distribution rather than a multinomial distribution.
 
-    >>> boot = Bootstrapper(n_resamples=10, kind="bayesian", random_state=1)
-    >>> resamples = list(boot.resample(design, start_col=1))
+    >>> resamples = list(bootstrap(design,
+    ...                            start_col=1,
+    ...                            n_resamples=10,
+    ...                            kind="bayesian",
+    ...                            random_state=1))
     >>> resamples[0]
     array([2.30576453e+00, 2.61738579e+00, 2.85140165e+00, 4.78956088e-02,
            5.69594722e-01, 4.85766407e-01, 3.58185441e-02, 7.73710834e-02,
@@ -130,111 +162,67 @@ class Bootstrapper:
     For convenience, the resample method can be called with both X and y, causing the resampled
     weights/indexes to automatically be applied to both matrices.
 
-    >>> resamples = list(boot.resample(design, y, start_col=1))
+    >>> resamples = list(bootstrap(design, y,
+    ...                            start_col=1,
+    ...                            n_resamples=10,
+    ...                            kind="bayesian",
+    ...                            random_state=1))
     >>> resampled_X, resampled_y = resamples[0]
     >>> resampled_y
-    array([1.34926314, 0.59942441, 0.4360995 , 2.75019554, 0.03237446,
-           3.05337544, 0.43723699, 0.05818418, 0.28384635, 0.2745058 ,
-           0.20724543, 0.07763387, 0.01048208, 0.9074077 , 1.06618557,
-           1.99243332, 1.10400974, 3.36009649])
+    array([2.30576453e+00, 2.61738579e+00, 2.85140165e+00, 4.78956088e-02,
+           5.69594722e-01, 4.85766407e-01, 3.58185441e-02, 7.73710834e-02,
+           9.00167099e-03, 2.23018979e-01, 1.84193794e-01, 5.87413492e-01,
+           7.80809178e-02, 1.49869223e+00, 6.27871188e+00, 4.41052278e-03,
+           1.08636700e-01, 3.68414832e-02])
     """
 
-    #: ("weights", "indexes", "bayesian) The three possible arguments that
-    # can be provided to the "kind" keyword argument.
-    _BOOTSTRAP_ALGORITHMS = tuple(["weights", "indexes", "bayesian"])
+    _random_generator = np.random.default_rng(random_state)
+    # this is a bit hacky, but we use the numpy generator to seed Numba
+    # this makes it both reproducible and thread-safe enough
+    nb_seed = _random_generator.integers(low=2**32 - 1)
+    set_numba_random_state(nb_seed)
 
-    def __init__(
-        self,
-        n_resamples,
-        *,
-        kind: str = "weights",
-        random_state: Union[np.random.Generator, int, None] = None,
-    ) -> None:
+    try:
+        bootstrap_sampler = _bootstrapper_factory(kind)
+    except KeyError:
+        raise KeyError(f"Invalid 'kind' argument: {kind}")
 
-        self._n_resamples = n_resamples
+    X, y = _validate(*arrays)
 
-        self._random_generator = np.random.default_rng(random_state)
-        # this is a bit hacky, but we use the numpy generator to seed Numba
-        # this makes it both reproducible and thread-safe enough
-        nb_seed = self._random_generator.integers(low=2**32 - 1)
-        set_numba_random_state(nb_seed)
+    if skip is None:
+        skip = []
+    else:
+        if not set(skip).issubset(range(X.shape[1] + 1)):
+            raise IndexError(f"skip contains invalid column indexes for X: {skip}")
 
-        if kind in self._BOOTSTRAP_ALGORITHMS:
-            self._kind = kind
-            self.bootstrap_sampler = _bootstrapper_factory(kind)
+    resampling_plan = tuple(
+        (cluster, False) if idx in skip else (cluster, True)
+        for idx, cluster in enumerate(id_cluster_counts(X))
+    )
+
+    bootstrap_pipeline = Pipeline(
+        components=[
+            (_repeat_func, {"func": bootstrap_sampler, "times": n_resamples}),
+        ]
+    )
+
+    if y is not None:
+        if kind == "indexes":
+            bootstrap_pipeline.add_component((_reindex, {"X": X, "y": y}))
         else:
-            raise KeyError("Invalid 'kind' argument.")
+            bootstrap_pipeline.add_component((_reweight, {"X": X, "y": y}))
 
-    def __repr__(self):
-        return (
-            f"<Bootstrapper(n_resamples={self._n_resamples}, kind={self._kind}, "
-            f"random_state={self._random_generator}>"
-        )
-
-    def resample(
-        self,
-        X: np.ndarray,
-        y: Optional[np.ndarray] = None,
-        start_col: int = 0,
-        skip: Optional[List[int]] = None,
-    ) -> Generator[Union[np.ndarray, Tuple[np.ndarray, np.ndarray]], None, None]:
-        """Generate bootstrapped samples from design matrix X.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            2D Design matrix
-        y : np.ndarray, optional
-            1D Regressand values, by default None
-        start_col : int, optional
-            The first column of the design matrix to bootstrap, by default 0
-        skip : _type_, optional
-            Columns to skip in the bootstrap. Skip columns that were sampled
-            without replacement from the prior column, by default None.
-
-        Yields
-        ------
-        Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]
-            If y is not provided, each resample will be a 1D np.ndarray containing
-            resampled weights (or indexes, if kind="indexes"). If y is provided,
-            each resample will be a tuple of X (or reindexed X), reweighted y
-            (or reindexed y) values.
-
-        Raises
-        ------
-        IndexError
-            Raised if skip does not contain valid indexes for X.
-        """
-        _validate(X, y)
-
-        if skip is None:
-            skip = []
-        else:
-            if not set(skip).issubset(range(X.shape[1] + 1)):
-                raise IndexError(f"skip contains invalid column indexes for X: {skip}")
-
-        resampling_plan = tuple(
-            (cluster, False) if idx in skip else (cluster, True)
-            for idx, cluster in enumerate(id_cluster_counts(X))
-        )
-
-        bootstrap_pipeline = Pipeline(
-            components=[
-                (_repeat_func, {"func": self.bootstrap_sampler}),
-                (_islice_wrapper, {"stop": self._n_resamples}),
-            ]
-        )
-
-        if y is not None:
-            if self._kind == "indexes":
-                bootstrap_pipeline.add_component((_reindex, {"X": X, "y": y}))
-            else:
-                bootstrap_pipeline.add_component((_reweight, {"X": X, "y": y}))
-
-        yield from bootstrap_pipeline.process(resampling_plan[start_col:])
+    yield from bootstrap_pipeline.process(resampling_plan[start_col:])
 
 
-class Permuter:
+def permute(
+    X: np.ndarray,
+    col_to_permute: int,
+    *,
+    n_resamples: int = 1000,
+    exact: bool = False,
+    random_state: Union[np.random.Generator, int, None] = None,
+) -> Iterator[np.ndarray]:
 
     """Permuter(n_resamples, exact=False, random_state=None)
 
@@ -242,9 +230,13 @@ class Permuter:
 
     Parameters
     ----------
+    X : np.ndarray
+        Design matrix
+    col_to_permute : int
+        Target level to permute
     n_resamples: int
-        Number of resamples for Permuter's resample method to generate.
-        Overridden by exact, if true.
+        Number of resamples for Permuter's resample method to generate,
+        by default 1000. Overridden by exact, if true.
     exact : bool, optional
         If True, overrides n_resamples and instead causes resample to
         enumerate all possible permutations and iterate through them
@@ -253,6 +245,16 @@ class Permuter:
         large datasets.
     random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
+
+    Yields
+    ------
+    np.ndarray
+        X with col_to_permute randomly shuffled
+
+    Raises
+    ------
+    NotImplementedError
+        Exact permutation when col_to_permute != 0 has not been implemented.
 
     Examples
     --------
@@ -274,8 +276,7 @@ class Permuter:
     If the first column is chosen as the target, Permuter will perform an ordinary shuffle
     and return the permuted design matrix.
 
-    >>> permute = Permuter(n_resamples=10, random_state=1)
-    >>> resamples = list(permute.resample(design, col_to_permute=0))
+    >>> resamples = list(permute(design, col_to_permute=0, n_resamples=10, random_state=1))
     >>> resamples[0]
     array([[1, 1],
            [2, 2],
@@ -289,8 +290,7 @@ class Permuter:
     20 possible permutations and we can see that Permuter enumerates all of them.
     Note that the n_resamples value is overriden when exact=True.
 
-    >>> permute = Permuter(n_resamples=10000, exact=True, random_state=1)
-    >>> resamples = list(permute.resample(design, col_to_permute=0))
+    >>> resamples = list(permute(design, col_to_permute=0, exact=True))
     >>> len(resamples)
     20
 
@@ -298,8 +298,7 @@ class Permuter:
     that is, second-level units will be shuffled within first-level units. In the following
     example, note that 1, 2, 3 remain nested in 1, while 4, 5, 6 remain nested in 2.
 
-    >>> permute = Permuter(n_resamples=10, random_state=1)
-    >>> resamples = list(permute.resample(design, col_to_permute=1))
+    >>> resamples = list(permute(design, col_to_permute=1, n_resamples=10, random_state=1))
     >>> resamples[0]
     array([[1, 1],
            [1, 3],
@@ -311,90 +310,54 @@ class Permuter:
     If any values are repeated, Permuter ensures that they are shuffled together.
 
     >>> repeated_design = design.repeat(2, axis=0)
-    >>> resamples = list(permute.resample(repeated_design, col_to_permute=0))
+    >>> resamples = list(permute(repeated_design,
+    ...                          col_to_permute=0,
+    ...                          n_resamples=10,
+    ...                          random_state=1))
     >>> resamples[0]
-    array([[2, 1],
-           [2, 1],
-           [1, 2],
-           [1, 2],
+    array([[1, 1],
+           [1, 1],
+           [2, 2],
+           [2, 2],
            [2, 3],
            [2, 3],
-           [2, 4],
-           [2, 4],
-           [1, 5],
-           [1, 5],
+           [1, 4],
+           [1, 4],
+           [2, 5],
+           [2, 5],
            [1, 6],
            [1, 6]])
 
     """
 
-    def __init__(
-        self,
-        n_resamples: int,
-        *,
-        exact: bool = False,
-        random_state: Union[np.random.Generator, int, None] = None,
-    ) -> None:
+    random_generator = np.random.default_rng(random_state)
 
-        self._n_resamples = n_resamples
-        self._exact = exact
+    if random_state is not None:
+        nb_seed = random_generator.integers(low=2**32)
+        set_numba_random_state(nb_seed)
 
-        self.random_generator = np.random.default_rng(random_state)
-        if random_state is not None:
-            nb_seed = self.random_generator.integers(low=2**32)
-            set_numba_random_state(nb_seed)
-
-    def __repr__(self):
-        return (
-            f"<Permuter(n_resamples={self._n_resamples}, exact={self._exact}, "
-            f"random_state={self.random_generator}>"
+    if col_to_permute != 0 and exact is True:
+        raise NotImplementedError(
+            "Exact permutation only available for col_to_permute = 0."
         )
 
-    def resample(
-        self, X: np.ndarray, col_to_permute: int
-    ) -> Generator[np.ndarray, None, None]:
-        """Yield copies of X with the target column randomly shuffled.
+    # permute values in this copy so that original array
+    # is untouched
+    cached_X = X.copy()
 
-        Parameters
-        ----------
-        X : np.ndarray
-            Design matrix
-        col_to_permute : int
-            Target level to permute
+    col_values, subclusters, supercluster_idxs = permutation_design_info(
+        cached_X, col_to_permute
+    )
 
-        Yields
-        ------
-        Generator[np.ndarray, None, None]
-            X with col_to_permute randomly shuffled
+    permutation_pipeline = _shuffle_generator_factory(
+        supercluster_idxs, subclusters, exact, n_resamples
+    )
 
-        Raises
-        ------
-        NotImplementedError
-            Exact permutation when col_to_permute != 0 has not been implemented.
-        """
+    permutation_pipeline.add_component(
+        (_place_permutation, {"target_array": cached_X, "col_idx": col_to_permute})
+    )
 
-        if col_to_permute != 0 and self._exact is True:
-            raise NotImplementedError(
-                "Exact permutation only available for col_to_permute = 0."
-            )
-
-        # permute values in this copy so that original array
-        # is untouched
-        cached_X = X.copy()
-
-        col_values, subclusters, supercluster_idxs = permutation_design_info(
-            cached_X, col_to_permute
-        )
-
-        permutation_pipeline = _shuffle_generator_factory(
-            supercluster_idxs, subclusters, self._exact, self._n_resamples
-        )
-
-        permutation_pipeline.add_component(
-            (_place_permutation, {"target_array": cached_X, "col_idx": col_to_permute})
-        )
-
-        yield from permutation_pipeline.process(np.array(col_values))
+    yield from permutation_pipeline.process(np.array(col_values))
 
 
 def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
@@ -528,6 +491,10 @@ def _permutation_design_info_impl(
     permutation_matrix, subclusters = np.unique(
         design[:, : col_to_permute + 2], axis=0, return_counts=True
     )
+
+    # need to make these immutable
+    col_values = tuple(permutation_matrix[:, col_to_permute].tolist())
+    subclusters = tuple(subclusters.tolist())
     # if the target column is nested within another level, we have
     # to stratify the fisher-yates shuffle
     _, supercluster_idxs = np.unique(
@@ -537,9 +504,6 @@ def _permutation_design_info_impl(
     supercluster_idxs = tuple(
         (low, high) for low, high in zip(supercluster_idxs[:-1], supercluster_idxs[1:])
     )
-
-    # need to make this immutable
-    col_values = tuple(permutation_matrix[:, col_to_permute].tolist())
 
     return col_values, subclusters, supercluster_idxs
 
@@ -567,18 +531,18 @@ def _shuffle_generator_factory(
             (
                 _repeat_func,
                 {
+                    "times": n_resamples,
                     "func": nb_strat_shuffle,
                     "stratification": supercluster_idxs,
                 },
             )
         )
-        permutation_pipeline.add_component((_islice_wrapper, {"stop": n_resamples}))
 
     if not np.all(subclusters == 1):
         permutation_pipeline.add_component(
             (
                 _repeat_array,
-                {"counts": subclusters},
+                {"counts": np.array(subclusters)},
             )
         )
 
@@ -649,8 +613,7 @@ def _validate(*arrs):
         Raised if any argument is not a numpy array.
     """
     for arr in arrs:
-        if arr is None:
-            continue
+
         try:
             if not np.issubdtype(arr.dtype, np.number):
                 raise ValueError(
@@ -660,18 +623,21 @@ def _validate(*arrs):
             raise AttributeError(
                 "Bootstrapper can only handle numpy arrays. Please pre-process your data."
             )
+    if len(arrs) == 1:
+        (X,) = arrs
+        y = None
+    elif len(arrs) == 2:
+        X, y = arrs
+    else:
+        raise ValueError(f"arrays can be one or two arrays, got {len(arrs)}")
+
+    return X, y
 
 
-def _repeat_func(first_argument, func, **kwargs):
+def _repeat_func(first_argument, func, times, **kwargs):
     """Utility function that repeats a function on a set
-    of arguments infinitely."""
-    while True:
-        yield func(first_argument, **kwargs)
-
-
-def _islice_wrapper(iterable, stop):
-    """Wrapper to make islice take a keyword argument."""
-    return islice(iterable, stop)
+    of arguments a number of times."""
+    yield from (func(first_argument, **kwargs) for _ in repeat(None, times))
 
 
 def _place_permutation(
