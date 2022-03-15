@@ -3,7 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - python=3.8.10
-  - numba==0.53.1
+  - numba==0.55.1
   - numpy==1.22.3
   - pandas==1.2.4
   - scipy==1.6.3
