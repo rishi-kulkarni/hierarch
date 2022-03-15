@@ -1,6 +1,6 @@
 from functools import lru_cache
 from itertools import repeat
-from typing import Tuple
+from typing import Optional, Tuple
 import numpy as np
 from numba import jit
 
@@ -63,7 +63,10 @@ def _encoded_last_level(X_hashable: Tuple[Tuple]) -> np.ndarray:
 
 
 def collapse_hierarchy(
-    design: np.ndarray, y: np.ndarray, weights: np.ndarray, levels_to_collapse: int
+    design: np.ndarray,
+    y: np.ndarray,
+    weights: Optional[np.ndarray] = None,
+    levels_to_collapse: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Collapses a level of hierarchy by computing regression coefficients and
     passing them up to the next level.
@@ -121,7 +124,10 @@ def collapse_hierarchy(
     # this is only allowed when we're only computing
     # intercepts - it's not a general approach to
     # weighted regression
-    out_y = y * weights
+    if weights is not None:
+        out_y = y * weights
+    else:
+        out_y = y
     for _ in repeat(None, levels_to_collapse):
         regressor, out_x = encoded_last_level(out_x)
         out_y = intercepts(regressor, out_y)
