@@ -4,7 +4,6 @@ from hierarch.resampling import (
     bootstrap,
     permute,
     id_cluster_counts,
-    permutation_design_info,
     _weights_to_index,
 )
 from hierarch.power import DataSimulator
@@ -263,11 +262,13 @@ class TestPermuter(unittest.TestCase):
     def test_repeat(self):
         """Test that subclusters move together."""
 
-        data = np.array([[1, 1], [1, 2]]).repeat(3, axis=0)
+        data = np.array([[1, 1], [1, 2], [2, 1]]).repeat(3, axis=0)
 
-        for permutation in permute(data, col_to_permute=1, n_resamples=10):
-            condition = all(permutation[:, 1] == [1, 1, 1, 2, 2, 2]) or all(
-                permutation[:, 1] == [2, 2, 2, 1, 1, 1]
+        for permutation in permute(data, col_to_permute=0, n_resamples=10):
+            condition = (
+                all(permutation[:, 1] == [1, 1, 1, 2, 2, 2, 1, 1, 1])
+                or all(permutation[:, 1] == [2, 2, 2, 1, 1, 1, 1, 1, 1])
+                or all(permutation[:, 1] == [1, 1, 1, 1, 1, 1, 2, 2, 2])
             )
 
             self.assertTrue(condition)
@@ -311,29 +312,29 @@ class TestIDClusters(unittest.TestCase):
                         self.assertEqual(hierarchy[idx][idx_2], v)
 
 
-class TestPermutationDesignInfo(unittest.TestCase):
-    def test_design_info(self):
-        design = np.array([[1, 1], [1, 2], [1, 3], [2, 4], [2, 5], [2, 5]])
+# class TestPermutationDesignInfo(unittest.TestCase):
+#     def test_design_info(self):
+#         design = np.array([[1, 1], [1, 2], [1, 3], [2, 4], [2, 5], [2, 5]])
 
-        col_values, subclusters, supercluster_idxs = permutation_design_info(
-            design, col_to_permute=0
-        )
+#         col_values, subclusters, supercluster_idxs = permutation_design_info(
+#             design, col_to_permute=0
+#         )
 
-        expected_col_values = (1, 1, 1, 2, 2)
-        self.assertEqual(col_values, expected_col_values)
+#         expected_col_values = (1, 1, 1, 2, 2)
+#         self.assertEqual(col_values, expected_col_values)
 
-        expected_subclusters = np.array([1, 1, 1, 1, 2])
-        assert_equal(subclusters, expected_subclusters)
+#         expected_subclusters = np.array([1, 1, 1, 1, 2])
+#         assert_equal(subclusters, expected_subclusters)
 
-        expected_supercluster_idxs = ((0, 5),)
-        self.assertEqual(supercluster_idxs, expected_supercluster_idxs)
+#         expected_supercluster_idxs = ((0, 5),)
+#         self.assertEqual(supercluster_idxs, expected_supercluster_idxs)
 
-    def test_exceptions(self):
-        design = np.array([1, 2, 3])
+#     def test_exceptions(self):
+#         design = np.array([1, 2, 3])
 
-        with self.assertRaises(ValueError) as ex:
-            permutation_design_info(design, 0)
-            self.assertIn("design_matrix should be a 2D design matrix", ex.exception)
+#         with self.assertRaises(ValueError) as ex:
+#             permutation_design_info(design, 0)
+#             self.assertIn("design_matrix should be a 2D design matrix", ex.exception)
 
 
 class TestWeightstoIndex(unittest.TestCase):

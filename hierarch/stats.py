@@ -438,7 +438,7 @@ def hypothesis_test(
             col_to_permute=treatment_col,
             n_resamples=permutations,
             exact=exact,
-            random_state=rng,
+            # numba random state is shared, so don't need to reseed
         )
     )
 
@@ -446,30 +446,43 @@ def hypothesis_test(
         teststat(design[:, -1], new_y) for design, new_y in permuted_resamples
     ]
 
-    # generate both one-tailed p-values, then two-tailed
-    p_less = np.where(truediff >= np.array(null_distribution))[0].size / len(
-        null_distribution
-    )
-    p_greater = np.where(truediff <= np.array(null_distribution))[0].size / len(
-        null_distribution
-    )
-    p_two = 2 * np.min((p_less, p_greater))
-
-    if alternative == "two-sided":
-        pval = p_two
-    elif alternative == "less":
-        pval = p_less
-    elif alternative == "greater":
-        pval = p_greater
-
-    if pval == 0:
-        pval += 1 / (len(null_distribution))
+    pval = p_value(alternative, truediff, null_distribution)
 
     if return_null is True:
         return pval, null_distribution
 
     else:
         return pval
+
+
+def p_value(alternative: str, truediff: float, null_distribution: np.ndarray):
+    # generate both one-tailed p-values, then two-tailed
+
+    if alternative == "less":
+        p_val = np.where(truediff >= np.array(null_distribution))[0].size / len(
+            null_distribution
+        )
+
+    elif alternative == "greater":
+
+        p_val = np.where(truediff <= np.array(null_distribution))[0].size / len(
+            null_distribution
+        )
+
+    else:
+        p_less = np.where(truediff >= np.array(null_distribution))[0].size / len(
+            null_distribution
+        )
+        p_greater = np.where(truediff <= np.array(null_distribution))[0].size / len(
+            null_distribution
+        )
+
+        p_val = 2 * np.min((p_less, p_greater))
+
+    if p_val == 0:
+        p_val += 1 / len(null_distribution)
+
+    return p_val
 
 
 def multi_sample_test(

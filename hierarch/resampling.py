@@ -176,11 +176,12 @@ def bootstrap(
            1.08636700e-01, 3.68414832e-02])
     """
 
-    _random_generator = np.random.default_rng(random_state)
-    # this is a bit hacky, but we use the numpy generator to seed Numba
-    # this makes it both reproducible and thread-safe enough
-    nb_seed = _random_generator.integers(low=2**32 - 1)
-    set_numba_random_state(nb_seed)
+    if random_state is not None:
+        # this is hacky, but we can use the numpy rng to seed the
+        # numba rng. using seedsequence with this makes it process-safe
+        random_generator = np.random.default_rng(random_state)
+        nb_seed = random_generator.integers(low=2**32)
+        set_numba_random_state(nb_seed)
 
     try:
         bootstrap_sampler = _bootstrapper_factory(kind)
@@ -330,9 +331,10 @@ def permute(
 
     """
 
-    random_generator = np.random.default_rng(random_state)
-
     if random_state is not None:
+        # this is hacky, but we can use the numpy rng to seed the
+        # numba rng. using seedsequence with this makes it process-safe
+        random_generator = np.random.default_rng(random_state)
         nb_seed = random_generator.integers(low=2**32)
         set_numba_random_state(nb_seed)
 
@@ -341,20 +343,8 @@ def permute(
             "Exact permutation only available for col_to_permute = 0."
         )
 
-    # permute values in this copy so that original array
-    # is untouched
-    cached_X = X.copy()
-
-    col_values, subclusters, supercluster_idxs = permutation_design_info(
-        cached_X, col_to_permute
-    )
-
-    permutation_pipeline = _shuffle_generator_factory(
-        supercluster_idxs, subclusters, exact, n_resamples
-    )
-
-    permutation_pipeline.add_component(
-        (_place_permutation, {"target_array": cached_X, "col_idx": col_to_permute})
+    col_values, permutation_pipeline = make_permutation_pipeline(
+        X, col_to_permute, exact, n_resamples
     )
 
     yield from permutation_pipeline.process(np.array(col_values))
@@ -445,9 +435,9 @@ def _id_cluster_impl(design: Tuple[Tuple]) -> Tuple[Tuple]:
     return tuple(cluster_desc)
 
 
-def permutation_design_info(
-    design_matrix: Tuple[Tuple], col_to_permute: int
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def make_permutation_pipeline(
+    design_matrix: Tuple[Tuple], col_to_permute: int, exact: bool, n_resamples: int
+) -> Pipeline:
     """This function produces the column to permute, any subclusters
     it contains, and any superclusters that contain it. This information
     is necessary for cluster-aware permutation.
@@ -461,11 +451,13 @@ def permutation_design_info(
     ----------
     design_matrix : Tuple[Tuple]
     col_to_permute : int
+    exact: bool
+    n_resamples: int
 
     Returns
     -------
-    Tuple[np.ndarray, np.ndarray, np.ndarray]
-        column to permute, subclusters, supercluster indexes
+    Pipeline
+        Pipeline that yields permutations of design_matrix
     """
 
     if design_matrix.ndim != 2:
@@ -474,23 +466,33 @@ def permutation_design_info(
         )
 
     # makes array hashable, assumes its 2D
-    hashable_design = tuple(map(tuple, design_matrix))
+    hashable_design = tuple(map(tuple, design_matrix.tolist()))
 
-    return _permutation_design_info_impl(hashable_design, col_to_permute)
+    return _make_permutation_pipeline_impl(
+        hashable_design, col_to_permute, exact, n_resamples
+    )
 
 
 @lru_cache
-def _permutation_design_info_impl(
-    design: Tuple[Tuple], col_to_permute: int
+def _make_permutation_pipeline_impl(
+    design: Tuple[Tuple], col_to_permute: int, exact: bool, n_resamples: int
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     design = np.array(design)
 
-    # we will actually be permuting the unique rows in this submatrix,
-    # then duplicating any rows that contain subclusters
-    permutation_matrix, subclusters = np.unique(
-        design[:, : col_to_permute + 2], axis=0, return_counts=True
-    )
+    # we're not actually looking at the y-values, so if the column
+    # to permute is the last column (which is generally should be),
+    # we assume that there are no subclusters
+    if col_to_permute % design.shape[1] == design.shape[1] - 1:
+        permutation_matrix = design
+        subclusters = np.array([1 for row in design])
+
+    else:
+        # we will actually be permuting the unique rows in this submatrix,
+        # then duplicating any rows that contain subclusters
+        permutation_matrix, subclusters = np.unique(
+            design[:, : col_to_permute + 2], axis=0, return_counts=True
+        )
 
     # need to make this immutable
     col_values = tuple(permutation_matrix[:, col_to_permute].tolist())
@@ -505,7 +507,15 @@ def _permutation_design_info_impl(
         (low, high) for low, high in zip(supercluster_idxs[:-1], supercluster_idxs[1:])
     )
 
-    return col_values, subclusters, supercluster_idxs
+    permutation_pipeline = _shuffle_generator_factory(
+        supercluster_idxs, subclusters, exact, n_resamples
+    )
+
+    permutation_pipeline.add_component(
+        (_place_permutation, {"target_array": design, "col_idx": col_to_permute})
+    )
+
+    return col_values, permutation_pipeline
 
 
 def _shuffle_generator_factory(
