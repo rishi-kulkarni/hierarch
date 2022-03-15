@@ -1,32 +1,52 @@
 import unittest
+
 import hierarch.stats
-from hierarch.power import DataSimulator
-import scipy.stats as stats
 import numpy as np
+import scipy.stats as stats
+from hierarch.power import DataSimulator
+from numpy.testing import assert_almost_equal
 
 
 class TestPreprocessData(unittest.TestCase):
-    def test_label_encoding(self):
+    def test_string_encoding(self):
         # check that strings get encoded
         data = np.array(["a", "b", "c"]).reshape((3, 1))
-        processed = hierarch.stats._preprocess_data(data)
-        self.assertTrue(processed.dtype, np.float64)
-        self.assertEqual(data.shape, processed.shape)
+        y = np.array([1, 2, 3])
+        processed_x, processed_y = hierarch.stats._preprocess_data(data, y)
+        self.assertTrue(processed_x.dtype, np.float64)
+        self.assertEqual(data.shape, processed_x.shape)
+
+    def test_float_encoding(self):
 
         # check that floats do not get encoded
         data = np.arange(10, step=0.5, dtype="object").reshape((10, 2))
-        processed = hierarch.stats._preprocess_data(data)
+        y = np.array([1.0 for i in data])
+        processed, y_proc = hierarch.stats._preprocess_data(data, y)
         for idx, v in enumerate(processed.flat):
             self.assertEqual(v, data.flat[idx])
 
+    def test_mixed_encoding(self):
         # check that when there is a mix of numerical and string columns,
         # the numerical columns do not get encoded
         data = np.arange(3, step=0.5, dtype="object").reshape((3, 2))
         data[:, 0] = np.array(["a", "b", "c"])
-        processed = hierarch.stats._preprocess_data(data)
+        y = np.array([1.0 for i in data])
+        processed, y_proc = hierarch.stats._preprocess_data(data, y)
         self.assertTrue(processed.dtype, np.float64)
         for idx, v in enumerate(processed[:, 1]):
             self.assertEqual(v, data[:, 1][idx])
+
+    def test_sorting(self):
+        data = np.array([[1, 2], [1, 1], [0, 1]])
+        y = np.array([1, 2, 3])
+
+        expected_data = np.array([[0, 1], [1, 1], [1, 2]])
+        expected_y = np.array([3, 2, 1])
+
+        generated_data, generated_y = hierarch.stats._preprocess_data(data, y)
+
+        assert_almost_equal(generated_data, expected_data)
+        assert_almost_equal(generated_y, expected_y)
 
 
 class TestStudentizedCovariance(unittest.TestCase):
