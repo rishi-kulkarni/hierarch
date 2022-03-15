@@ -6,8 +6,8 @@ import pandas as pd
 from hierarch.internal_functions import (
     bivar_central_moment,
 )
-from hierarch.regression_utils import GroupbyMean
-from hierarch.resampling import Bootstrapper, Permuter
+from hierarch.regression_utils import collapse_hierarchy
+from hierarch.resampling import bootstrap, permute
 from warnings import warn, simplefilter
 from functools import lru_cache
 
@@ -51,7 +51,7 @@ def _preprocess_data(X, y):
             except ValueError:
                 encoded[:, idx] = np.unique(v, return_inverse=True)[1]
     # stable sort sort the output by row
-    sorted_idx = np.lexsort(np.rot90(encoded))
+    sorted_idx = np.lexsort(encoded.T)
 
     encoded_X = encoded[sorted_idx].astype(np.float64)
     y = y[sorted_idx]
@@ -388,9 +388,6 @@ def hypothesis_test(
     elif not isinstance(permutations, int) or permutations < 1:
         raise TypeError("permutations must be 'all' or an integer greater than 0")
 
-    # initialize and fit the bootstrapper to the data
-    bootstrapper = Bootstrapper(n_resamples=bootstraps, random_state=rng, kind=kind)
-
     # fetch test statistic from dictionary or, if given a
     # custom test statistic, make sure it is callable
     if isinstance(compare, str):
@@ -400,13 +397,8 @@ def hypothesis_test(
     else:
         raise AttributeError("Custom test statistics must be callable.")
 
-    # aggregate our data up to the treated level and determine the
-    # observed test statistic
-    aggregator = GroupbyMean()
-    aggregator.fit(X)
-
     # determine the number of groupby reductions need to be done
-    levels_to_agg = X.shape[1] - treatment_col - 3
+    levels_to_agg = X.shape[1] - treatment_col - 1
 
     # if levels_to_agg = 0, there are no bootstrap samples to
     # generate.
@@ -415,61 +407,44 @@ def hypothesis_test(
         simplefilter("always", UserWarning)
         warn("No levels to bootstrap. Setting bootstraps to zero.")
 
-    test = X
-    test = aggregator.transform(test, iterations=levels_to_agg)
-    truediff = teststat(test[:, treatment_col], test[:, -1])
-
-    # initialize and fit the permuter to the aggregated data
-    # don't need to seed this, as numba's PRNG state is shared
-    permuter = Permuter()
-
     if permutations == "all":
-        permuter.fit(test, treatment_col, exact=True)
-
-        # in the exact case, determine and set the total number of
-        # possible permutations
-        counts = np.unique(test[:, 0], return_counts=True)[1]
-        permutations = _binomial(counts.sum(), counts[0])
-
+        exact = True
     else:
-        # just fit the permuter if this is a randomized test
-        permuter.fit(test, treatment_col)
+        exact = False
 
-    # skip the dot on the permute function
-    call_permute = permuter.transform
+    test_x, test_y = collapse_hierarchy(X, y, levels_to_collapse=levels_to_agg)
+    truediff = teststat(test_x[:, treatment_col], test_y)
 
-    # initialize empty null distribution list
-    null_distribution = []
-    total = bootstraps * permutations
-
-    # first set of permutations is on the original data
-    # this helps to prevent getting a p-value of 0
-    for k in range(permutations):
-        permute_resample = call_permute(test)
-        null_distribution.append(
-            teststat(permute_resample[:, treatment_col], permute_resample[:, -1])
+    aggregated_resamples = (
+        collapse_hierarchy(design, new_y, levels_to_collapse=levels_to_agg)
+        for design, new_y in bootstrap(
+            X,
+            y,
+            start_col=treatment_col + 2,
+            n_resamples=bootstraps,
+            kind=kind,
+            random_state=rng,
         )
+    )
 
-    # already did one set of permutations
-    bootstraps -= 1
-
-    for X_resample, y_resample in bootstrapper.resample(
-        X, y, start_col=treatment_col + 2, skip=skip
-    ):
-        # aggregate it up to the treated level
-        bootstrapped_sample = np.column_stack((X_resample, y_resample))
-        bootstrapped_sample = aggregator.transform(
-            bootstrapped_sample, iterations=levels_to_agg
+    permuted_resamples = (
+        (
+            permuted_design,
+            new_y,
         )
+        for design, new_y in aggregated_resamples
+        for permuted_design in permute(
+            X=design,
+            col_to_permute=treatment_col,
+            n_resamples=permutations,
+            exact=exact,
+            random_state=rng,
+        )
+    )
 
-        # generate permuted samples, calculate test statistic,
-        # append to null distribution
-
-        for k in range(permutations):
-            permute_resample = call_permute(bootstrapped_sample)
-            null_distribution.append(
-                teststat(permute_resample[:, treatment_col], permute_resample[:, -1])
-            )
+    null_distribution = [
+        teststat(design[:, -1], new_y) for design, new_y in permuted_resamples
+    ]
 
     # generate both one-tailed p-values, then two-tailed
     p_less = np.where(truediff >= np.array(null_distribution))[0].size / len(
@@ -488,7 +463,7 @@ def hypothesis_test(
         pval = p_greater
 
     if pval == 0:
-        pval += 1 / (total)
+        pval += 1 / (len(null_distribution))
 
     if return_null is True:
         return pval, null_distribution
