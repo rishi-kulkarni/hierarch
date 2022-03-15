@@ -1,54 +1,75 @@
 import unittest
 
-import pandas as pd
-import scipy.stats as stats
-from hierarch.power import DataSimulator
-from hierarch.regression_utils import GroupbyMean
+import numpy as np
+from numpy.testing import assert_equal, assert_almost_equal
+
+from hierarch.regression_utils import encoded_last_level, collapse_hierarchy
 
 
-class TestGroupByMean(unittest.TestCase):
-    def _compare_results(self, pd_agg, groupby_agg):
-        for idx, v in enumerate(pd_agg):
-            self.assertAlmostEqual(v, groupby_agg[idx])
+class TestEncodedLastLevel(unittest.TestCase):
+    def test_encoded_last_level_no_rep(self):
 
-    def test_groupby_mean(self):
-        """
-        Checks that GroupbyMean produces the same values as pandas
-        groupby.mean() operation.
-        """
-        sim = DataSimulator([[stats.norm], [stats.norm], [stats.norm]])
-        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [2, [4, 3], [10, 11, 2, 5, 6, 4, 3]])
-        for hierarchy in hierarchies:
-            sim.fit(hierarchy)
-            data = sim.generate()
-            pd_data = pd.DataFrame(data, columns=["Col 1", "Col 2", "Col 3", "Value"])
-            grouper = GroupbyMean()
-            # reduce by one column
-            groupby_agg = grouper.fit_transform(data, iterations=1)[:, -1]
-            pd_agg = pd_data.groupby(["Col 1", "Col 2"]).mean()["Value"].to_numpy()
-            self._compare_results(pd_agg, groupby_agg)
-            # reduce by two columns
-            groupby_agg = grouper.fit_transform(data, iterations=2)[:, -1]
-            pd_agg = (
-                pd_data.groupby(["Col 1", "Col 2"])
-                .mean()
-                .groupby(["Col 1"])
-                .mean()["Value"]
-                .to_numpy()
-            )
-            self._compare_results(pd_agg, groupby_agg)
+        design = np.array([[1, 1], [1, 2], [1, 3]])
 
-    def test_groupby_mean_ref(self):
-        sim = DataSimulator([[stats.norm], [stats.norm], [stats.norm]])
-        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [3, [10, 4, 3], 7])
-        for hierarchy in hierarchies:
-            sim.fit(hierarchy)
-            data = sim.generate()
-            grouper = GroupbyMean()
-            # check that using a reference array works
-            grouper_2 = GroupbyMean()
-            grouper_2.fit(data)
-            ordinary_agg = grouper.fit_transform(data, iterations=1)[:, -1]
-            data[:, 1] = 1
-            ref_agg = grouper_2.transform(data)[:, -1]
-            self._compare_results(ordinary_agg, ref_agg)
+        expected_encoding = np.eye(3, dtype=np.float64)
+        expected_uniques = design
+
+        generated_encoding, generated_uniques = encoded_last_level(design)
+
+        assert_equal(generated_encoding, expected_encoding)
+        assert_equal(generated_uniques, expected_uniques)
+
+    def test_encoded_last_level_reps(self):
+
+        design = np.array([[1, 1], [1, 2], [1, 3]]).repeat(3, axis=0)
+
+        expected_encoding = np.eye(3, dtype=np.float64).repeat(3, axis=0)
+        expected_uniques = np.unique(design, axis=0)
+
+        generated_encoding, generated_uniques = encoded_last_level(design)
+
+        assert_equal(generated_encoding, expected_encoding)
+        assert_equal(generated_uniques, expected_uniques)
+
+
+class TestCollapseHierarchy(unittest.TestCase):
+    def test_single_collapse(self):
+        design = np.array([[1.0, 1.0], [1.0, 2.0], [1.0, 3.0]]).repeat(2, axis=0)
+        y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        weights = np.array([1.0 for i in y])
+
+        expected_x = np.array([1, 1, 1]).reshape((-1, 1))
+        expected_y = np.array([1.5, 3.5, 5.5])
+
+        generated_x, generated_y = collapse_hierarchy(design, y, weights, 1)
+
+        assert_almost_equal(generated_x, expected_x)
+        assert_almost_equal(generated_y, expected_y)
+
+    def test_multiple_collapse(self):
+        design = np.array([[1, 1, 1], [1, 1, 2], [1, 2, 1], [1, 2, 2]]).repeat(
+            3, axis=0
+        )
+        y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).repeat(2)
+        weights = np.array([1.0 for i in y])
+
+        expected_x = np.array([1, 1]).reshape((-1, 1))
+        expected_y = np.array([2, 5])
+
+        generated_x, generated_y = collapse_hierarchy(design, y, weights, 2)
+
+        assert_almost_equal(generated_x, expected_x)
+        assert_almost_equal(generated_y, expected_y)
+
+    def test_weighted_collapse(self):
+        design = np.array([[1.0, 1.0], [1.0, 2.0], [1.0, 3.0]]).repeat(2, axis=0)
+        y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        weights = np.array([2.0, 0.0, 2.0, 0, 0, 2.0])
+
+        expected_x = np.array([1, 1, 1]).reshape((-1, 1))
+        expected_y = np.array([1.0, 3.0, 6.0])
+
+        generated_x, generated_y = collapse_hierarchy(design, y, weights, 1)
+
+        assert_almost_equal(generated_x, expected_x)
+        assert_almost_equal(generated_y, expected_y)
