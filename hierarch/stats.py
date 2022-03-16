@@ -1,7 +1,7 @@
 import numpy as np
 from numba import jit
 import math
-from itertools import combinations
+from itertools import chain, combinations, repeat
 import pandas as pd
 from hierarch.internal_functions import (
     bivar_central_moment,
@@ -250,7 +250,7 @@ def hypothesis_test(
     skip=None,
     bootstraps=100,
     permutations=1000,
-    kind="weights",
+    bootstrap_alg="efron",
     return_null=False,
     random_state=None,
 ):
@@ -284,7 +284,7 @@ def hypothesis_test(
         Number of permutations to perform PER bootstrap sample. "all"
         for exact test (only works if there are only two treatments), by default 1000
     kind : str, optional
-        Bootstrap algorithm - see Bootstrapper class, by default "weights"
+        Bootstrap algorithm - either "efron" or "bayesian"
     return_null : bool, optional
         Return the null distribution as well as the p value, by default False
     random_state : int or numpy random Generator, optional
@@ -356,37 +356,21 @@ def hypothesis_test(
 
 
     """
-
-    # turns the input array or dataframe into a float64 array
-    if isinstance(X, (np.ndarray, pd.DataFrame)):
-        if isinstance(X, pd.DataFrame) and isinstance(treatment_col, str):
-            treatment_col = int(X.columns.get_loc(treatment_col))
-        X, y = _preprocess_data(X, y)
-
-    else:
-        raise TypeError("Input data must be ndarray or DataFrame.")
-
     # set random state
     rng = np.random.default_rng(random_state)
 
-    # enforce lower bound on skip
-    if skip is not None:
-        skip = list(skip)
-        for v in reversed(skip):
-            if v <= treatment_col + 1:
-                warn("No need to include columns before treated columns in skip.")
-                skip.remove(v)
-    else:
-        skip = []
+    X, y, treatment_col, skip = _validate_hyp_test(
+        X, y, treatment_col, skip, bootstraps, permutations
+    )
 
-    # enforce bounds on bootstraps and permutations
-    if not isinstance(bootstraps, int) or bootstraps < 1:
-        raise TypeError("bootstraps must be an integer greater than 0")
-    if isinstance(permutations, str):
-        if permutations != "all":
-            raise TypeError("permutations must be 'all' or an integer greater than 0")
-    elif not isinstance(permutations, int) or permutations < 1:
-        raise TypeError("permutations must be 'all' or an integer greater than 0")
+    if bootstrap_alg == "efron":
+        kind = "weights"
+    elif bootstrap_alg == "bayesian":
+        kind = "bayesian"
+    else:
+        raise ValueError(
+            f"bootstrap_alg must be efron or bayesian, got {bootstrap_alg}"
+        )
 
     # fetch test statistic from dictionary or, if given a
     # custom test statistic, make sure it is callable
@@ -409,42 +393,25 @@ def hypothesis_test(
 
     if permutations == "all":
         exact = True
+        permutations = -1
     else:
         exact = False
 
     test_x, test_y = collapse_hierarchy(X, y, levels_to_collapse=levels_to_agg)
     truediff = teststat(test_x[:, treatment_col], test_y)
 
-    aggregated_resamples = (
-        collapse_hierarchy(design, new_y, levels_to_collapse=levels_to_agg)
-        for design, new_y in bootstrap(
-            X,
-            y,
-            start_col=treatment_col + 2,
-            n_resamples=bootstraps,
-            kind=kind,
-            random_state=rng,
-        )
+    null_distribution = generate_null_dist(
+        X,
+        y,
+        treatment_col,
+        bootstraps,
+        permutations,
+        kind,
+        rng,
+        teststat,
+        levels_to_agg,
+        exact,
     )
-
-    permuted_resamples = (
-        (
-            permuted_design,
-            new_y,
-        )
-        for design, new_y in aggregated_resamples
-        for permuted_design in permute(
-            X=design,
-            col_to_permute=treatment_col,
-            n_resamples=permutations,
-            exact=exact,
-            # numba random state is shared, so don't need to reseed
-        )
-    )
-
-    null_distribution = [
-        teststat(design[:, -1], new_y) for design, new_y in permuted_resamples
-    ]
 
     pval = p_value(alternative, truediff, null_distribution)
 
@@ -455,25 +422,108 @@ def hypothesis_test(
         return pval
 
 
+def _validate_hyp_test(X, y, treatment_col, skip, bootstraps, permutations):
+    # turns the input array or dataframe into a float64 array
+    if isinstance(X, (np.ndarray, pd.DataFrame)):
+        if isinstance(X, pd.DataFrame) and isinstance(treatment_col, str):
+            treatment_col = int(X.columns.get_loc(treatment_col))
+        X, y = _preprocess_data(X, y)
+
+    else:
+        raise TypeError("Input data must be ndarray or DataFrame.")
+
+    # enforce lower bound on skip
+    if skip is not None:
+        skip = list(skip)
+        for v in reversed(skip):
+            if v <= treatment_col + 1:
+                warn("No need to include columns before treated columns in skip.")
+                skip.remove(v)
+    else:
+        skip = []
+
+    # enforce bounds on bootstraps and permutations
+    if not isinstance(bootstraps, int) or bootstraps < 1:
+        raise TypeError("bootstraps must be an integer greater than 0")
+    if isinstance(permutations, str):
+        if permutations != "all":
+            raise TypeError("permutations must be 'all' or an integer greater than 0")
+    elif not isinstance(permutations, int) or permutations < 1:
+        raise TypeError("permutations must be 'all' or an integer greater than 0")
+    return X, y, treatment_col, skip
+
+
+def generate_null_dist(
+    X,
+    y,
+    treatment_col,
+    bootstraps,
+    permutations,
+    kind,
+    rng,
+    teststat,
+    levels_to_agg,
+    exact,
+):
+
+    # we want to include the "ordinary" permutation test where we do not
+    # bootstrap anything
+    obs_X, obs_y = collapse_hierarchy(X, y, levels_to_collapse=levels_to_agg)
+    obs_ys = repeat(obs_y, permutations)
+
+    aggregated_bootstrap_resamples = (
+        collapse_hierarchy(design, new_y, levels_to_collapse=levels_to_agg)
+        for design, new_y in bootstrap(
+            X,
+            y,
+            start_col=treatment_col + 2,
+            n_resamples=bootstraps - 1,
+            kind=kind,
+        )
+    )
+
+    bootstrapped_ys = chain.from_iterable(
+        repeat(new_y, permutations) for design, new_y in aggregated_bootstrap_resamples
+    )
+
+    # the design matrix does not change during the test, so we can use one
+    # generator for every bootstrap resample
+    permutations = permute(
+        X=obs_X,
+        col_to_permute=treatment_col,
+        n_resamples=bootstraps * permutations,
+        exact=exact,
+        random_state=rng,
+    )
+
+    null_distribution = np.array(
+        [
+            teststat(design[:, -1], new_y)
+            for design, new_y in zip(
+                permutations,
+                chain(obs_ys, bootstrapped_ys),
+            )
+        ]
+    )
+
+    return null_distribution
+
+
 def p_value(alternative: str, truediff: float, null_distribution: np.ndarray):
     # generate both one-tailed p-values, then two-tailed
 
     if alternative == "less":
-        p_val = np.where(truediff >= np.array(null_distribution))[0].size / len(
-            null_distribution
-        )
+        p_val = np.where(truediff >= null_distribution)[0].size / len(null_distribution)
 
     elif alternative == "greater":
 
-        p_val = np.where(truediff <= np.array(null_distribution))[0].size / len(
-            null_distribution
-        )
+        p_val = np.where(truediff <= null_distribution)[0].size / len(null_distribution)
 
     else:
-        p_less = np.where(truediff >= np.array(null_distribution))[0].size / len(
+        p_less = np.where(truediff >= null_distribution)[0].size / len(
             null_distribution
         )
-        p_greater = np.where(truediff <= np.array(null_distribution))[0].size / len(
+        p_greater = np.where(truediff <= null_distribution)[0].size / len(
             null_distribution
         )
 
