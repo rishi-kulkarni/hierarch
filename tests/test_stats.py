@@ -130,7 +130,7 @@ class TestHypothesisTest(unittest.TestCase):
 
     def test_hypothesis_exceptions(self):
         with self.assertRaises(TypeError) as raises:
-            hierarch.stats.hypothesis_test("ah", 0)
+            hierarch.stats.hypothesis_test("ah", "B", 0)
         self.assertIn("Input data must be ndarray or DataFrame.", str(raises.exception))
 
         with self.assertWarns(Warning) as warning:
