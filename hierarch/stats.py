@@ -491,12 +491,14 @@ def generate_null_dist(
         random_state=rng,
     )
 
-    null_distribution = np.array(
-        [
+    null_distribution = np.fromiter(
+        (
             teststat(design[:, -1], new_y)
             for new_y in chain((obs_y,), bootstrapped_ys)
             for design in islice(permutation_generator, permutations)
-        ]
+        ),
+        dtype=np.float64,
+        count=permutations * bootstraps,
     )
 
     return null_distribution
