@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 from numpy.testing import assert_equal, assert_almost_equal
 
-from hierarch.regression_utils import encoded_last_level, collapse_hierarchy
+from hierarch.regression_utils import pseudo_inverse_last_level, collapse_hierarchy
 
 
 class TestEncodedLastLevel(unittest.TestCase):
@@ -14,7 +14,7 @@ class TestEncodedLastLevel(unittest.TestCase):
         expected_encoding = np.eye(3, dtype=np.float64)
         expected_uniques = design
 
-        generated_encoding, generated_uniques = encoded_last_level(design)
+        generated_encoding, generated_uniques = pseudo_inverse_last_level(design)
 
         assert_equal(generated_encoding, expected_encoding)
         assert_equal(generated_uniques, expected_uniques)
@@ -26,7 +26,7 @@ class TestEncodedLastLevel(unittest.TestCase):
         expected_encoding = np.eye(3, dtype=np.float64).repeat(3, axis=0)
         expected_uniques = np.unique(design, axis=0)
 
-        generated_encoding, generated_uniques = encoded_last_level(design)
+        generated_encoding, generated_uniques = pseudo_inverse_last_level(design)
 
         assert_equal(generated_encoding, expected_encoding)
         assert_equal(generated_uniques, expected_uniques)

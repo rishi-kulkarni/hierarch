@@ -51,7 +51,7 @@ def pseudo_inverse_last_level(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
     A = np.eye(len(uniq))[inverse]
 
-    return np.linalg.inv(A.T @ A) @ A.T, uniq
+    return np.linalg.inv(A.T @ A) @ A.T, uniq[:, :-1].copy()
 
 
 def collapse_hierarchy(
@@ -123,5 +123,4 @@ def collapse_hierarchy(
     for _ in repeat(None, levels_to_collapse):
         regressor, out_x = pseudo_inverse_last_level(out_x)
         out_y = regressor @ out_y
-        out_x = out_x[:, :-1]
     return out_x, out_y

@@ -344,11 +344,8 @@ def permute(
             "Exact permutation only available for col_to_permute = 0."
         )
 
-    # make a copy so we don't shuffle the original
-    X_cached = X.copy()
-
     col_values, permutation_pipeline = make_permutation_pipeline(
-        X_cached, col_to_permute, exact, n_resamples
+        X, col_to_permute, exact, n_resamples
     )
 
     yield from permutation_pipeline.process(np.array(col_values))
@@ -410,11 +407,6 @@ def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
 
     """
 
-    # turn the design matrix into a tuple so lru_cache can be used
-    # this presumes a 2D matrix, but all design matrices are
-    # convert tuple back to array
-    design = np.array(design)
-
     # deque is nice because we're traversing the hierarchy backwards
     cluster_desc = deque()
 
@@ -458,24 +450,26 @@ def make_permutation_pipeline(
     Pipeline
         Pipeline that yields permutations of design_matrix
     """
+    # make a copy so the original is not shuffled
+    cached_design = design.copy()
 
-    if design.ndim != 2:
+    if cached_design.ndim != 2:
         raise ValueError(
-            f"design_matrix should be a 2D design matrix, got {design.ndim} dimensions"
+            f"design_matrix should be a 2D design matrix, got {cached_design.ndim} dimensions"
         )
 
     # we're not actually looking at the y-values, so if the column
     # to permute is the last column (which is generally should be),
     # we assume that there are no subclusters
-    if col_to_permute % design.shape[1] == design.shape[1] - 1:
-        permutation_matrix = design
-        subclusters = np.array([1 for row in design])
+    if col_to_permute % cached_design.shape[1] == cached_design.shape[1] - 1:
+        permutation_matrix = cached_design
+        subclusters = np.array([1 for row in cached_design])
 
     else:
         # we will actually be permuting the unique rows in this submatrix,
         # then duplicating any rows that contain subclusters
         permutation_matrix, subclusters = np.unique(
-            design[:, : col_to_permute + 2], axis=0, return_counts=True
+            cached_design[:, : col_to_permute + 2], axis=0, return_counts=True
         )
 
     # need to make this immutable
@@ -496,7 +490,7 @@ def make_permutation_pipeline(
     )
 
     permutation_pipeline.add_component(
-        (_place_permutation, {"target_array": design, "col_idx": col_to_permute})
+        (_place_permutation, {"target_array": cached_design, "col_idx": col_to_permute})
     )
 
     return col_values, permutation_pipeline
