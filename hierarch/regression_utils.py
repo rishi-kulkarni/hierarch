@@ -1,16 +1,11 @@
-from functools import lru_cache
 from itertools import repeat
 from typing import Optional, Tuple
 import numpy as np
-from numba import jit
+from np_cache import np_lru_cache
 
 
-@jit(nopython=True)
-def intercepts(X: np.ndarray, y: np.ndarray) -> np.ndarray:
-    return np.linalg.lstsq(X, y)[0]
-
-
-def encoded_last_level(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+@np_lru_cache
+def pseudo_inverse_last_level(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """One-hot encoding of the last level of hierarchy.
 
     Delegates to _encoded_last_level, which is cached.
@@ -52,14 +47,11 @@ def encoded_last_level(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
            [1., 2.],
            [1., 3.]]))
     """
-    hashable = tuple(map(tuple, X.tolist()))
-    return _encoded_last_level(hashable)
+    uniq, inverse = np.unique(X, axis=0, return_inverse=True)
 
+    A = np.eye(len(uniq))[inverse]
 
-@lru_cache
-def _encoded_last_level(X_hashable: Tuple[Tuple]) -> np.ndarray:
-    uniq, inverse = np.unique(X_hashable, axis=0, return_inverse=True)
-    return np.eye(len(uniq))[inverse], uniq
+    return np.linalg.inv(A.T @ A) @ A.T, uniq
 
 
 def collapse_hierarchy(
@@ -129,7 +121,7 @@ def collapse_hierarchy(
     else:
         out_y = y
     for _ in repeat(None, levels_to_collapse):
-        regressor, out_x = encoded_last_level(out_x)
-        out_y = intercepts(regressor, out_y)
+        regressor, out_x = pseudo_inverse_last_level(out_x)
+        out_y = regressor @ out_y
         out_x = out_x[:, :-1]
     return out_x, out_y

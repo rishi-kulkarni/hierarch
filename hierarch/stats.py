@@ -469,7 +469,6 @@ def generate_null_dist(
     # we want to include the "ordinary" permutation test where we do not
     # bootstrap anything
     obs_X, obs_y = collapse_hierarchy(X, y, levels_to_collapse=levels_to_agg)
-    obs_ys = repeat(obs_y, permutations)
 
     aggregated_bootstrap_resamples = (
         collapse_hierarchy(design, new_y, levels_to_collapse=levels_to_agg)
@@ -482,26 +481,18 @@ def generate_null_dist(
         )
     )
 
-    bootstrapped_ys = chain.from_iterable(
-        repeat(new_y, permutations) for design, new_y in aggregated_bootstrap_resamples
-    )
-
-    # the design matrix does not change during the test, so we can use one
-    # generator for every bootstrap resample
-    permutations = permute(
-        X=obs_X,
-        col_to_permute=treatment_col,
-        n_resamples=bootstraps * permutations,
-        exact=exact,
-        random_state=rng,
-    )
+    bootstrapped_ys = (new_y for design, new_y in aggregated_bootstrap_resamples)
 
     null_distribution = np.array(
         [
             teststat(design[:, -1], new_y)
-            for design, new_y in zip(
-                permutations,
-                chain(obs_ys, bootstrapped_ys),
+            for new_y in chain((obs_y,), bootstrapped_ys)
+            for design in permute(
+                X=obs_X,
+                col_to_permute=treatment_col,
+                n_resamples=permutations,
+                exact=exact,
+                random_state=rng,
             )
         ]
     )

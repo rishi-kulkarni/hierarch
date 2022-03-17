@@ -1,5 +1,6 @@
 from collections import deque
 from functools import lru_cache
+from np_cache import np_lru_cache
 from itertools import repeat
 from typing import Callable, Generator, Iterable, Iterator, List, Optional, Tuple, Union
 
@@ -343,13 +344,17 @@ def permute(
             "Exact permutation only available for col_to_permute = 0."
         )
 
+    # make a copy so we don't shuffle the original
+    X_cached = X.copy()
+
     col_values, permutation_pipeline = make_permutation_pipeline(
-        X, col_to_permute, exact, n_resamples
+        X_cached, col_to_permute, exact, n_resamples
     )
 
     yield from permutation_pipeline.process(np.array(col_values))
 
 
+@np_lru_cache
 def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
     """Identifies the hierarchy in a design matrix.
 
@@ -407,13 +412,6 @@ def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
 
     # turn the design matrix into a tuple so lru_cache can be used
     # this presumes a 2D matrix, but all design matrices are
-    hashable = tuple(map(tuple, design.tolist()))
-
-    return _id_cluster_impl(hashable)
-
-
-@lru_cache
-def _id_cluster_impl(design: Tuple[Tuple]) -> Tuple[Tuple]:
     # convert tuple back to array
     design = np.array(design)
 
@@ -435,8 +433,9 @@ def _id_cluster_impl(design: Tuple[Tuple]) -> Tuple[Tuple]:
     return tuple(cluster_desc)
 
 
+@np_lru_cache
 def make_permutation_pipeline(
-    design_matrix: Tuple[Tuple], col_to_permute: int, exact: bool, n_resamples: int
+    design: Tuple[Tuple], col_to_permute: int, exact: bool, n_resamples: int
 ) -> Pipeline:
     """This function produces the column to permute, any subclusters
     it contains, and any superclusters that contain it. This information
@@ -460,25 +459,10 @@ def make_permutation_pipeline(
         Pipeline that yields permutations of design_matrix
     """
 
-    if design_matrix.ndim != 2:
+    if design.ndim != 2:
         raise ValueError(
-            f"design_matrix should be a 2D design matrix, got {design_matrix.ndim} dimensions"
+            f"design_matrix should be a 2D design matrix, got {design.ndim} dimensions"
         )
-
-    # makes array hashable, assumes its 2D
-    hashable_design = tuple(map(tuple, design_matrix.tolist()))
-
-    return _make_permutation_pipeline_impl(
-        hashable_design, col_to_permute, exact, n_resamples
-    )
-
-
-@lru_cache
-def _make_permutation_pipeline_impl(
-    design: Tuple[Tuple], col_to_permute: int, exact: bool, n_resamples: int
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-
-    design = np.array(design)
 
     # we're not actually looking at the y-values, so if the column
     # to permute is the last column (which is generally should be),
