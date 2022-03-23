@@ -17,7 +17,7 @@ class TestBootstrapper(unittest.TestCase):
     def setUp(self):
         sim = DataSimulator([[stats.norm], [stats.norm], [stats.norm]])
         sim.fit([2, 3, 3])
-        self.X = sim.generate()[:, :-2]
+        self.X = sim.generate()[:, :-2].copy()
 
     def test_seeding(self):
         """
