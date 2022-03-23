@@ -10,7 +10,7 @@ from numba import guvectorize
 from .internal_functions import (
     _repeat,
     msp,
-    nb_strat_shuffle,
+    bounded_uint,
     set_numba_random_state,
 )
 from .pipeline import Pipeline
@@ -236,6 +236,7 @@ def permute(
     *,
     n_resamples: int = 1000,
     exact: bool = False,
+    batch_size: int = 50,
     random_state: Union[np.random.Generator, int, None] = None,
 ) -> Iterator[np.ndarray]:
 
@@ -358,7 +359,7 @@ def permute(
         )
 
     col_values, permutation_pipeline = make_permutation_pipeline(
-        X, col_to_permute, exact, n_resamples
+        X, col_to_permute, exact, n_resamples, batch_size
     )
 
     yield from permutation_pipeline.process(np.array(col_values))
@@ -440,7 +441,11 @@ def id_cluster_counts(design: np.ndarray) -> Tuple[np.ndarray]:
 
 @np_lru_cache
 def make_permutation_pipeline(
-    design: Tuple[Tuple], col_to_permute: int, exact: bool, n_resamples: int
+    design: Tuple[Tuple],
+    col_to_permute: int,
+    exact: bool,
+    n_resamples: int,
+    batch_size: int = 50,
 ) -> Pipeline:
     """This function produces the column to permute, any subclusters
     it contains, and any superclusters that contain it. This information
@@ -494,12 +499,9 @@ def make_permutation_pipeline(
         permutation_matrix[:, :col_to_permute], axis=0, return_index=True
     )
     supercluster_idxs = np.append(supercluster_idxs, len(permutation_matrix))
-    supercluster_idxs = tuple(
-        (low, high) for low, high in zip(supercluster_idxs[:-1], supercluster_idxs[1:])
-    )
 
     permutation_pipeline = _shuffle_generator_factory(
-        supercluster_idxs, subclusters, exact, n_resamples
+        supercluster_idxs, subclusters, exact, n_resamples, batch_size
     )
 
     permutation_pipeline.add_component(
@@ -514,6 +516,7 @@ def _shuffle_generator_factory(
     subclusters: Tuple,
     exact: bool,
     n_resamples: int,
+    batch_size: int = 50,
 ) -> Pipeline:
     """This factory function generates a permutation algorithm per our needs.
 
@@ -530,11 +533,11 @@ def _shuffle_generator_factory(
     else:
         permutation_pipeline.add_component(
             (
-                _repeat_func,
+                permutation_resampler,
                 {
-                    "func": nb_strat_shuffle,
-                    "times": n_resamples,
+                    "n_resamples": n_resamples,
                     "stratification": supercluster_idxs,
+                    "batch_size": batch_size,
                 },
             )
         )
@@ -682,6 +685,65 @@ def _validate(*arrs):
         raise ValueError(f"arrays can be one or two arrays, got {len(arrs)}")
 
     return X, y
+
+
+@guvectorize(["(int64[:], int64[:], int64[:])"], "(n),(m)->(n)")
+def stratified_permuted(arr: np.ndarray, stratification: np.ndarray, res: np.ndarray):
+    """Vectorized stratified permutation. Similar to np.random.Generator.permuted,
+    but makes a copy.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Array to be permuted
+    stratification : np.ndarray
+        Permutation will occur between indexes. Must contain 0 and n for
+        arr of length n.
+    res : np.ndarray
+        Permuted copy of arr
+    """
+    res[:] = arr[:]
+    for low, high in zip(stratification[:-1], stratification[1:]):
+        for i in range(low, high - 1):
+            j = bounded_uint(high - i) + i
+            res[i], res[j] = res[j], res[i]
+
+
+def permutation_resampler(
+    col_to_resample: np.ndarray,
+    stratification: np.ndarray,
+    n_resamples: int,
+    batch_size: int,
+) -> Iterator[np.ndarray]:
+    """_summary_
+
+    Parameters
+    ----------
+    col_to_resample : np.ndarray
+    stratification : np.ndarray
+        Indexes that shuffling should occur between. Must
+        contain 0 and len(col_to_resample)
+    n_resamples : int
+    batch_size : int
+        Number of permutations to generate at once
+
+    Yields
+    ------
+    Iterator[np.ndarray]
+        row of permuted indexes from batch
+    """
+    repeats, extra = divmod(n_resamples, batch_size)
+
+    raw_indexes = np.arange(len(col_to_resample))[None, :]
+    index_batch = raw_indexes.repeat(batch_size, axis=0)
+
+    for i in range(repeats):
+        for row in stratified_permuted(index_batch, stratification):
+            yield col_to_resample[row]
+
+    extra_batch = raw_indexes.repeat(extra, axis=0)
+    for row in stratified_permuted(extra_batch, stratification):
+        yield col_to_resample[row]
 
 
 def _repeat_func(first_argument, func, times, **kwargs):
