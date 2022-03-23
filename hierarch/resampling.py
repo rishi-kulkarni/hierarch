@@ -1,16 +1,15 @@
 from collections import deque
 from functools import lru_cache
 from np_cache import np_lru_cache
-from itertools import repeat
+from itertools import islice, repeat, chain
 from typing import Callable, Generator, Iterable, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
-from numba import jit
+from numba import guvectorize
 
 from .internal_functions import (
     _repeat,
     msp,
-    nb_chain_from_iterable,
     nb_strat_shuffle,
     set_numba_random_state,
 )
@@ -23,6 +22,7 @@ def bootstrap(
     skip: Optional[List[int]] = None,
     n_resamples: int = 1000,
     kind: str = "weights",
+    batch_size: int = 50,
     random_state: Union[np.random.Generator, int, None] = None,
 ) -> Iterator[Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]]:
     """
@@ -55,6 +55,10 @@ def bootstrap(
 
         "indexes" generates a set of new indexes for the dataset.
         Mathematically, this is equivalent to demanding integer weights.
+    batch_size : int
+        Number of bootstrap resamples to generate at once, by default 50.
+        The resamples are yielded one at a time, but can be generated in
+        a vectorized manner at the expense of memory.
     random_state : int or numpy.random.Generator instance, optional
         Seeds the Bootstrapper for reproducibility, by default None
 
@@ -204,7 +208,16 @@ def bootstrap(
 
     bootstrap_pipeline = Pipeline(
         components=[
-            (_repeat_func, {"func": bootstrap_sampler, "times": n_resamples}),
+            (
+                _repeat_func,
+                {
+                    "func": bootstrap_sampler,
+                    "times": (n_resamples // batch_size) + 1,
+                    "batch_size": batch_size,
+                },
+            ),
+            (chain.from_iterable, {}),
+            (_islice_wrapper, {"stop": n_resamples}),
         ]
     )
 
@@ -536,55 +549,105 @@ def _shuffle_generator_factory(
     return permutation_pipeline
 
 
+@guvectorize(["(int64[:], int64[:], int64[:])"], "(n),(n),(m)", target="cpu")
+def efron_bootstrap(clusters, weights, res):
+    """Vectorized Efron bootstrap resampling.
+
+    Note: because the length of res cannot be inferred from the lengths of
+    clusters and weights, it has to be preallocated and given as an argument
+    to this function.
+
+    Parameters
+    ----------
+    clusters : np.ndarray
+        Number of records in each cluster on this level.
+    weights : np.ndarray
+        Pre-existing weights.
+    res : np.ndarray
+        Array to put resampled weights in.
+    """
+    spot = 0
+    for cluster, weight in zip(clusters, weights):
+        res[spot : spot + cluster] = np.random.multinomial(
+            cluster * weight, np.full(cluster, 1 / cluster)
+        )
+        spot += cluster
+
+
+@guvectorize(["(int64[:], float64[:], float64[:])"], "(n),(n),(m)", target="cpu")
+def bayesian_bootstrap(clusters: np.ndarray, weights: np.ndarray, res: np.ndarray):
+    """Vectorized bayesian bootstrap resampling.
+
+    Note: because the length of res cannot be inferred from the lengths of
+    clusters and weights, it has to be preallocated and given as an argument
+    to this function.
+
+    Parameters
+    ----------
+    clusters : np.ndarray
+        Number of records in each cluster on this level.
+    weights : np.ndarray
+        Pre-existing weights.
+    res : np.ndarray
+        Array to put resampled weights in.
+    """
+
+    spot = 0
+    for cluster, weight in zip(clusters, weights):
+        res[spot : spot + cluster] = (
+            np.random.dirichlet(np.ones(cluster)) * weight * cluster
+        )
+        spot += cluster
+
+
+@guvectorize(["(int64[:], int64[:])"], "(n)->(n)")
+def _weights_to_index(weights, indexes):
+    """Helper function to convert multinomial bootstrap weights back
+    to indexes if the traditional bootstrap sample presentation is
+    desired."""
+    spot = 0
+    for i, v in enumerate(weights):
+        for j in range(v):
+            indexes[spot] = i
+            spot += 1
+
+
 @lru_cache
 def _bootstrapper_factory(kind: str) -> Callable:
     """Factory function that returns the appropriate transform()."""
 
-    # these helper functions wrap the distributions so that they take the same arguments
-    @jit(nopython=True)
-    def _multinomial_distribution(weight, v):
-        return np.random.multinomial(v * weight, np.full(v, 1 / v))
-
-    @jit(nopython=True)
-    def _dirichlet_distribution(weight, v):
-        return np.random.dirichlet(np.ones(v), size=None) * weight * v
-
-    @jit(nopython=True)
-    def _resample_weights(resampling_plan):
+    def _resample_weights(resampling_plan, batch_size=50):
         # at the start, all samples are weighted equally
-        weights = np.array([1 for i in resampling_plan[0][0]], dtype=_weight_dtype)
-
-        for subclusters, to_resample in resampling_plan:
-
+        weights = np.ones(
+            (batch_size, resampling_plan[0][0].shape[0]), dtype=_weight_dtype
+        )
+        for clusters, to_resample in resampling_plan:
             if not to_resample:
                 # expand the old weights to fit into the column
-                weights = np.repeat(weights, subclusters)
+                weights = np.repeat(weights, clusters, axis=1)
             else:
-                # generate new weights from the distribution we're using
-                weights = nb_chain_from_iterable(
-                    [_dist(weights[idx], v) for idx, v in enumerate(subclusters)]
-                )
+                out = np.zeros((batch_size, clusters.sum()), dtype=_weight_dtype)
+                _bootstrap_gufunc(clusters, weights, out)
+                weights = out
         return weights
 
     _KIND_DISPATCHER = {
-        "weights": (np.int64, _multinomial_distribution),
-        "indexes": (np.int64, _multinomial_distribution),
-        "bayesian": (np.float64, _dirichlet_distribution),
+        "weights": (np.int64, efron_bootstrap),
+        "indexes": (np.int64, efron_bootstrap),
+        "bayesian": (np.float64, bayesian_bootstrap),
     }
-    _weight_dtype, _dist = _KIND_DISPATCHER[kind]
+    _weight_dtype, _bootstrap_gufunc = _KIND_DISPATCHER[kind]
 
     if kind == "indexes":
 
-        @jit(nopython=True)
-        def _bootstrapper_impl(resampling_plan):
-            weights = _resample_weights(resampling_plan)
-            return _weights_to_index(weights)
+        def _bootstrapper_impl(resampling_plan, batch_size=50):
+            weights = _resample_weights(resampling_plan, batch_size)
+            return iter(_weights_to_index(weights))
 
     else:
 
-        @jit(nopython=True)
-        def _bootstrapper_impl(resampling_plan):
-            return _resample_weights(resampling_plan)
+        def _bootstrapper_impl(resampling_plan, batch_size=50):
+            return iter(_resample_weights(resampling_plan, batch_size))
 
     return _bootstrapper_impl
 
@@ -670,25 +733,6 @@ def _reweight(
     yield from ((X, y * weights) for weights in weight_generator)
 
 
-@jit(nopython=True)
-def _weights_to_index(weights):
-    """Converts a 1D array of integer weights to indices.
-
-    Equivalent to np.array(list(range(n))).repeat(weights).
-
-    Parameters
-    ----------
-    weights : array-like of ints
-
-    Returns
-    -------
-    indexes: array-like of ints
-    """
-
-    indexes = np.empty(weights.sum(), dtype=np.int64)
-    spot = 0
-    for i, v in enumerate(weights):
-        for j in range(v):
-            indexes[spot] = i
-            spot += 1
-    return indexes
+def _islice_wrapper(generator, stop):
+    """Pipeline component that wraps islice."""
+    yield from islice(generator, stop)
