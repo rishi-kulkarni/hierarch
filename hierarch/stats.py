@@ -272,7 +272,7 @@ def hypothesis_test(
     compare : str, optional
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
-    alternative : {"two-sided", "less", "greater"}
+    alternative : {"two-sided", "lesser", "greater"}
         The alternative hypothesis for the test, "two-sided" by default.
     skip : list of ints, optional
         Columns to skip in the bootstrap. Skip columns that were sampled
@@ -503,24 +503,41 @@ def generate_null_dist(
 
 
 def p_value(alternative: str, truediff: float, null_distribution: np.ndarray) -> float:
+    """Computes a p-value based on an observed test statistic, a null distribution
+    of test statistics, and an alternative hypothesis.
+
+    The two-tailed alternative uses 2 * minimum of the one-tailed p-values.
+
+    Parameters
+    ----------
+    alternative : str
+        ("lesser", "greater", "two-sided") alternative hypothesis
+    truediff : float
+        Observed value of test statistic
+    null_distribution : np.ndarray
+        Empirical distribution of test statistics
+
+    Returns
+    -------
+    float
+        p-value
+    """
     # generate both one-tailed p-values, then two-tailed
 
-    if alternative == "less":
-        p_val = np.where(truediff >= null_distribution)[0].size / len(null_distribution)
+    if alternative == "lesser":
+        p_val = (truediff >= null_distribution).sum() / len(null_distribution)
 
     elif alternative == "greater":
 
-        p_val = np.where(truediff <= null_distribution)[0].size / len(null_distribution)
+        p_val = (truediff <= null_distribution).sum() / len(null_distribution)
+
+    elif alternative == "two-sided":
+        p_lesser = (truediff >= null_distribution).sum() / len(null_distribution)
+        p_greater = (truediff <= null_distribution).sum() / len(null_distribution)
+        p_val = 2 * np.min((p_lesser, p_greater))
 
     else:
-        p_less = np.where(truediff >= null_distribution)[0].size / len(
-            null_distribution
-        )
-        p_greater = np.where(truediff <= null_distribution)[0].size / len(
-            null_distribution
-        )
-
-        p_val = 2 * np.min((p_less, p_greater))
+        raise ValueError(f"Invalid alternative, got: {alternative}")
 
     if p_val == 0:
         p_val += 1 / len(null_distribution)
