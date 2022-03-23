@@ -1,7 +1,7 @@
 import numpy as np
 from numba import jit
 import math
-from itertools import chain, combinations, islice
+from itertools import chain, combinations, product
 import pandas as pd
 from hierarch.internal_functions import (
     bivar_central_moment,
@@ -393,7 +393,6 @@ def hypothesis_test(
 
     if permutations == "all":
         exact = True
-        permutations = -1
     else:
         exact = False
 
@@ -482,29 +481,28 @@ def generate_null_dist(
     )
 
     bootstrapped_ys = (new_y for design, new_y in aggregated_bootstrap_resamples)
+    all_ys = chain((obs_y,), bootstrapped_ys)
 
     permutation_generator = permute(
         X=obs_X,
         col_to_permute=treatment_col,
-        n_resamples=permutations * bootstraps,
+        n_resamples=permutations,
         exact=exact,
         random_state=rng,
     )
 
     null_distribution = np.fromiter(
         (
-            teststat(design[:, -1], new_y)
-            for new_y in chain((obs_y,), bootstrapped_ys)
-            for design in islice(permutation_generator, permutations)
+            teststat(design[:, treatment_col], new_y)
+            for new_y, design in product(all_ys, permutation_generator)
         ),
         dtype=np.float64,
-        count=permutations * bootstraps,
     )
 
     return null_distribution
 
 
-def p_value(alternative: str, truediff: float, null_distribution: np.ndarray):
+def p_value(alternative: str, truediff: float, null_distribution: np.ndarray) -> float:
     # generate both one-tailed p-values, then two-tailed
 
     if alternative == "less":
