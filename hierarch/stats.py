@@ -1,7 +1,7 @@
 import numpy as np
 from numba import jit
 import math
-from itertools import chain, combinations, product
+from itertools import chain, combinations, product, cycle
 import pandas as pd
 from hierarch.internal_functions import (
     bivar_central_moment,
@@ -483,19 +483,32 @@ def generate_null_dist(
     bootstrapped_ys = (new_y for design, new_y in aggregated_bootstrap_resamples)
     all_ys = chain((obs_y,), bootstrapped_ys)
 
-    permutation_generator = permute(
-        X=obs_X,
-        col_to_permute=treatment_col,
-        n_resamples=permutations,
-        exact=exact,
-        random_state=rng,
-    )
+    if exact:
+        null_combos = product(
+            all_ys,
+            permute(
+                X=obs_X,
+                col_to_permute=treatment_col,
+                n_resamples=permutations,
+                exact=exact,
+                random_state=rng,
+            ),
+        )
+
+    else:
+        null_combos = zip(
+            cycle(all_ys),
+            permute(
+                X=obs_X,
+                col_to_permute=treatment_col,
+                n_resamples=permutations * bootstraps,
+                exact=exact,
+                random_state=rng,
+            ),
+        )
 
     null_distribution = np.fromiter(
-        (
-            teststat(design[:, treatment_col], new_y)
-            for new_y, design in product(all_ys, permutation_generator)
-        ),
+        (teststat(design[:, treatment_col], new_y) for new_y, design in null_combos),
         dtype=np.float64,
     )
 
