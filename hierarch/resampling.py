@@ -1,7 +1,6 @@
 from collections import deque
 from functools import lru_cache
 from np_cache import np_lru_cache
-from itertools import islice, repeat, chain
 from typing import Callable, Generator, Iterable, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
@@ -209,15 +208,12 @@ def bootstrap(
     bootstrap_pipeline = Pipeline(
         components=[
             (
-                _repeat_func,
+                bootstrap_sampler,
                 {
-                    "func": bootstrap_sampler,
-                    "times": (n_resamples // batch_size) + 1,
+                    "n_resamples": n_resamples,
                     "batch_size": batch_size,
                 },
             ),
-            (chain.from_iterable, {}),
-            (_islice_wrapper, {"stop": n_resamples}),
         ]
     )
 
@@ -236,7 +232,7 @@ def permute(
     *,
     n_resamples: int = 1000,
     exact: bool = False,
-    batch_size: int = 50,
+    batch_size: int = 100,
     random_state: Union[np.random.Generator, int, None] = None,
 ) -> Iterator[np.ndarray]:
 
@@ -324,6 +320,7 @@ def permute(
            [2, 6]])
 
     If any values are repeated, Permuter ensures that they are shuffled together.
+    Note that there's rarely a reason to do this in a hypothesis-testing context.
 
     >>> repeated_design = design.repeat(2, axis=0)
     >>> resamples = list(permute(repeated_design,
@@ -445,7 +442,7 @@ def make_permutation_pipeline(
     col_to_permute: int,
     exact: bool,
     n_resamples: int,
-    batch_size: int = 50,
+    batch_size: int,
 ) -> Pipeline:
     """This function produces the column to permute, any subclusters
     it contains, and any superclusters that contain it. This information
@@ -491,7 +488,7 @@ def make_permutation_pipeline(
         )
 
     # need to make this immutable
-    col_values = tuple(permutation_matrix[:, col_to_permute].tolist())
+    col_values = permutation_matrix[:, col_to_permute]
 
     # if the target column is nested within another level, we have
     # to stratify the fisher-yates shuffle
@@ -516,7 +513,7 @@ def _shuffle_generator_factory(
     subclusters: Tuple,
     exact: bool,
     n_resamples: int,
-    batch_size: int = 50,
+    batch_size: int,
 ) -> Pipeline:
     """This factory function generates a permutation algorithm per our needs.
 
@@ -619,7 +616,7 @@ def _weights_to_index(weights, indexes):
 def _bootstrapper_factory(kind: str) -> Callable:
     """Factory function that returns the appropriate transform()."""
 
-    def _resample_weights(resampling_plan, batch_size=50):
+    def _resample_weights(resampling_plan, batch_size):
         # at the start, all samples are weighted equally
         weights = np.ones(
             (batch_size, resampling_plan[0][0].shape[0]), dtype=_weight_dtype
@@ -643,14 +640,23 @@ def _bootstrapper_factory(kind: str) -> Callable:
 
     if kind == "indexes":
 
-        def _bootstrapper_impl(resampling_plan, batch_size=50):
-            weights = _resample_weights(resampling_plan, batch_size)
-            return iter(_weights_to_index(weights))
+        def _bootstrapper_impl(resampling_plan, n_resamples, batch_size):
+            repeats, extra_batch = divmod(n_resamples, batch_size)
+            for i in range(repeats):
+                yield from _weights_to_index(
+                    _resample_weights(resampling_plan, batch_size)
+                )
+            yield from _weights_to_index(
+                _resample_weights(resampling_plan, extra_batch)
+            )
 
     else:
 
-        def _bootstrapper_impl(resampling_plan, batch_size=50):
-            return iter(_resample_weights(resampling_plan, batch_size))
+        def _bootstrapper_impl(resampling_plan, n_resamples, batch_size):
+            repeats, extra_batch = divmod(n_resamples, batch_size)
+            for i in range(repeats):
+                yield from _resample_weights(resampling_plan, batch_size)
+            yield from _resample_weights(resampling_plan, extra_batch)
 
     return _bootstrapper_impl
 
@@ -738,18 +744,14 @@ def permutation_resampler(
     index_batch = raw_indexes.repeat(batch_size, axis=0)
 
     for i in range(repeats):
-        for row in stratified_permuted(index_batch, stratification):
-            yield col_to_resample[row]
+        yield from np.take(
+            col_to_resample, stratified_permuted(index_batch, stratification)
+        )
 
     extra_batch = raw_indexes.repeat(extra, axis=0)
-    for row in stratified_permuted(extra_batch, stratification):
-        yield col_to_resample[row]
-
-
-def _repeat_func(first_argument, func, times, **kwargs):
-    """Utility function that repeats a function on a set
-    of arguments a number of times."""
-    return (func(first_argument, **kwargs) for _ in repeat(None, times))
+    yield from np.take(
+        col_to_resample, stratified_permuted(extra_batch, stratification)
+    )
 
 
 def _place_permutation(
@@ -771,7 +773,7 @@ def _place_permutation(
     """
     for permutation in permutation_generator:
         target_array[:, col_idx] = permutation
-        yield target_array.copy()
+        yield np.array(target_array)
 
 
 def _repeat_array(
@@ -793,8 +795,3 @@ def _reweight(
 ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
     """Pipeline component that reweights y using weights pulled from weight_generator."""
     yield from ((X, y * weights) for weights in weight_generator)
-
-
-def _islice_wrapper(generator, stop):
-    """Pipeline component that wraps islice."""
-    yield from islice(generator, stop)
