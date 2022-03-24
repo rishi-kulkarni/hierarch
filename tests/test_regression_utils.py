@@ -12,7 +12,7 @@ class TestEncodedLastLevel(unittest.TestCase):
         design = np.array([[1, 1], [1, 2], [1, 3]])
 
         expected_encoding = np.eye(3, dtype=np.float64)
-        expected_uniques = design
+        expected_uniques = np.array([1, 1, 1])[:, None]
 
         generated_encoding, generated_uniques = pseudo_inverse_last_level(design)
 
@@ -23,12 +23,13 @@ class TestEncodedLastLevel(unittest.TestCase):
 
         design = np.array([[1, 1], [1, 2], [1, 3]]).repeat(3, axis=0)
 
-        expected_encoding = np.eye(3, dtype=np.float64).repeat(3, axis=0)
-        expected_uniques = np.unique(design, axis=0)
+        enc = np.eye(3, dtype=np.float64).repeat(3, axis=0)
+        expected_pseudo_inverse = np.linalg.inv(enc.T @ enc) @ enc.T
+        expected_uniques = np.array([1, 1, 1])[:, None]
 
         generated_encoding, generated_uniques = pseudo_inverse_last_level(design)
 
-        assert_equal(generated_encoding, expected_encoding)
+        assert_equal(generated_encoding, expected_pseudo_inverse)
         assert_equal(generated_uniques, expected_uniques)
 
 
