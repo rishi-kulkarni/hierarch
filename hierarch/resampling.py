@@ -127,7 +127,7 @@ def bootstrap(
     ...                            kind="weights",
     ...                            random_state=1))
     >>> resamples[0]
-    array([3, 0, 3, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 2, 3, 1])
+    array([1, 2, 0, 1, 2, 0, 1, 1, 1, 1, 1, 4, 2, 0, 1, 0, 0, 0])
 
     These weights can be consumed by a function that computes a weighted statistical quantity.
 
@@ -145,8 +145,8 @@ def bootstrap(
     ...                            kind="indexes",
     ...                            random_state=1))
     >>> resamples[0]
-    array([ 0,  0,  0,  2,  2,  2,  6,  7,  8, 12, 13, 14, 15, 15, 16, 16, 16,
-           17])
+    array([ 0,  1,  1,  3,  4,  4,  6,  7,  8,  9, 10, 11, 11, 11, 11, 12, 12,
+           14])
 
     Bootstrapper also implements the Bayesian bootstrap, which resamples weights from a dirichlet
     distribution rather than a multinomial distribution.
@@ -157,11 +157,10 @@ def bootstrap(
     ...                            kind="bayesian",
     ...                            random_state=1))
     >>> resamples[0]
-    array([2.30576453e+00, 2.61738579e+00, 2.85140165e+00, 4.78956088e-02,
-           5.69594722e-01, 4.85766407e-01, 3.58185441e-02, 7.73710834e-02,
-           9.00167099e-03, 2.23018979e-01, 1.84193794e-01, 5.87413492e-01,
-           7.80809178e-02, 1.49869223e+00, 6.27871188e+00, 4.41052278e-03,
-           1.08636700e-01, 3.68414832e-02])
+    array([0.88309416, 0.25491275, 0.17914842, 0.40079262, 1.88974779,
+           0.7963255 , 2.41925443, 2.15130489, 0.02541944, 1.69127994,
+           1.52348525, 0.42456709, 0.1854059 , 0.70222986, 2.28517886,
+           0.48974997, 0.35698548, 1.34111767])
 
     For convenience, the resample method can be called with both X and y, causing the resampled
     weights/indexes to automatically be applied to both matrices.
@@ -173,11 +172,10 @@ def bootstrap(
     ...                            random_state=1))
     >>> resampled_X, resampled_y = resamples[0]
     >>> resampled_y
-    array([2.30576453e+00, 2.61738579e+00, 2.85140165e+00, 4.78956088e-02,
-           5.69594722e-01, 4.85766407e-01, 3.58185441e-02, 7.73710834e-02,
-           9.00167099e-03, 2.23018979e-01, 1.84193794e-01, 5.87413492e-01,
-           7.80809178e-02, 1.49869223e+00, 6.27871188e+00, 4.41052278e-03,
-           1.08636700e-01, 3.68414832e-02])
+    array([0.88309416, 0.25491275, 0.17914842, 0.40079262, 1.88974779,
+           0.7963255 , 2.41925443, 2.15130489, 0.02541944, 1.69127994,
+           1.52348525, 0.42456709, 0.1854059 , 0.70222986, 2.28517886,
+           0.48974997, 0.35698548, 1.34111767])
     """
 
     if random_state is not None:
@@ -286,16 +284,11 @@ def permute(
            [2, 6]])
 
     If the first column is chosen as the target, Permuter will perform an ordinary shuffle
-    and return the permuted design matrix.
+    and return the permuted column.
 
     >>> resamples = list(permute(design, col_to_permute=0, n_resamples=10, random_state=1))
     >>> resamples[0]
-    array([[1, 1],
-           [2, 2],
-           [2, 3],
-           [1, 4],
-           [2, 5],
-           [1, 6]])
+    array([1, 2, 2, 1, 2, 1])
 
     If exact=True, Permuter will not repeat a permutation until all possible
     permutations have been exhausted. For this design matrix, there are only
@@ -312,12 +305,7 @@ def permute(
 
     >>> resamples = list(permute(design, col_to_permute=1, n_resamples=10, random_state=1))
     >>> resamples[0]
-    array([[1, 1],
-           [1, 3],
-           [1, 2],
-           [2, 5],
-           [2, 4],
-           [2, 6]])
+    array([1, 3, 2, 5, 4, 6])
 
     If any values are repeated, Permuter ensures that they are shuffled together.
     Note that there's rarely a reason to do this in a hypothesis-testing context.
@@ -328,18 +316,7 @@ def permute(
     ...                          n_resamples=10,
     ...                          random_state=1))
     >>> resamples[0]
-    array([[1, 1],
-           [1, 1],
-           [2, 2],
-           [2, 2],
-           [2, 3],
-           [2, 3],
-           [1, 4],
-           [1, 4],
-           [2, 5],
-           [2, 5],
-           [1, 6],
-           [1, 6]])
+    array([1, 1, 2, 2, 2, 2, 1, 1, 2, 2, 1, 1])
 
     """
 
@@ -501,10 +478,6 @@ def make_permutation_pipeline(
         supercluster_idxs, subclusters, exact, n_resamples, batch_size
     )
 
-    # permutation_pipeline.add_component(
-    #     (_place_permutation, {"target_array": cached_design, "col_idx": col_to_permute})
-    # )
-
     return col_values, permutation_pipeline
 
 
@@ -549,7 +522,9 @@ def _shuffle_generator_factory(
     return permutation_pipeline
 
 
-@guvectorize(["(int64[:], int64[:], int64[:])"], "(n),(n),(m)", target="cpu")
+@guvectorize(
+    ["(int64[:], int64[:], int64[:])"], "(n),(n),(m)", target="cpu", cache=True
+)
 def efron_bootstrap(clusters, weights, res):
     """Vectorized Efron bootstrap resampling.
 
@@ -574,7 +549,9 @@ def efron_bootstrap(clusters, weights, res):
         spot += cluster
 
 
-@guvectorize(["(int64[:], float64[:], float64[:])"], "(n),(n),(m)", target="cpu")
+@guvectorize(
+    ["(int64[:], float64[:], float64[:])"], "(n),(n),(m)", target="cpu", cache=True
+)
 def bayesian_bootstrap(clusters: np.ndarray, weights: np.ndarray, res: np.ndarray):
     """Vectorized bayesian bootstrap resampling.
 
@@ -600,7 +577,7 @@ def bayesian_bootstrap(clusters: np.ndarray, weights: np.ndarray, res: np.ndarra
         spot += cluster
 
 
-@guvectorize(["(int64[:], int64[:])"], "(n)->(n)")
+@guvectorize(["(int64[:], int64[:])"], "(n)->(n)", cache=True)
 def _weights_to_index(weights, indexes):
     """Helper function to convert multinomial bootstrap weights back
     to indexes if the traditional bootstrap sample presentation is
@@ -693,7 +670,7 @@ def _validate(*arrs):
     return X, y
 
 
-@guvectorize(["(int64[:], int64[:], int64[:])"], "(n),(m)->(n)")
+@guvectorize(["(int64[:], int64[:], int64[:])"], "(n),(m)->(n)", cache=True)
 def stratified_permuted(arr: np.ndarray, stratification: np.ndarray, res: np.ndarray):
     """Vectorized stratified permutation. Similar to np.random.Generator.permuted,
     but makes a copy.
