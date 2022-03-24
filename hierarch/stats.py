@@ -508,7 +508,7 @@ def generate_null_dist(
         )
 
     null_distribution = np.fromiter(
-        (teststat(design[:, treatment_col], new_y) for new_y, design in null_combos),
+        (teststat(design, new_y) for new_y, design in null_combos),
         dtype=np.float64,
     )
 

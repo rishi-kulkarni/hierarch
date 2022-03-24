@@ -501,9 +501,9 @@ def make_permutation_pipeline(
         supercluster_idxs, subclusters, exact, n_resamples, batch_size
     )
 
-    permutation_pipeline.add_component(
-        (_place_permutation, {"target_array": cached_design, "col_idx": col_to_permute})
-    )
+    # permutation_pipeline.add_component(
+    #     (_place_permutation, {"target_array": cached_design, "col_idx": col_to_permute})
+    # )
 
     return col_values, permutation_pipeline
 
@@ -721,7 +721,7 @@ def permutation_resampler(
     n_resamples: int,
     batch_size: int,
 ) -> Iterator[np.ndarray]:
-    """_summary_
+    """Wraps stratified_permuted to yield permutations one by one.
 
     Parameters
     ----------

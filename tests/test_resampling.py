@@ -252,11 +252,11 @@ class TestPermuter(unittest.TestCase):
             expected_per_cluster = set((1, 2, 3, 4))
             self.assertEqual(
                 expected_per_cluster,
-                expected_per_cluster.intersection(permutation[:4, 1]),
+                expected_per_cluster.intersection(permutation[:4]),
             )
             self.assertEqual(
                 expected_per_cluster,
-                expected_per_cluster.intersection(permutation[4:, 1]),
+                expected_per_cluster.intersection(permutation[4:]),
             )
 
     def test_repeat(self):
@@ -266,9 +266,9 @@ class TestPermuter(unittest.TestCase):
 
         for permutation in permute(data, col_to_permute=0, n_resamples=10):
             condition = (
-                all(permutation[:, 1] == [1, 1, 1, 2, 2, 2, 1, 1, 1])
-                or all(permutation[:, 1] == [2, 2, 2, 1, 1, 1, 1, 1, 1])
-                or all(permutation[:, 1] == [1, 1, 1, 1, 1, 1, 2, 2, 2])
+                all(permutation == [1, 1, 1, 2, 2, 2, 1, 1, 1])
+                or all(permutation == [2, 2, 2, 1, 1, 1, 1, 1, 1])
+                or all(permutation == [1, 1, 1, 1, 1, 1, 2, 2, 2])
             )
 
             self.assertTrue(condition)
