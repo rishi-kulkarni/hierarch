@@ -1,10 +1,5 @@
-from typing import Iterable
 import numba as nb
 import numpy as np
-
-from hierarch import numba_overloads
-
-assert numba_overloads
 
 
 @nb.jit(nopython=True, cache=True)
@@ -50,65 +45,6 @@ def nb_data_grabber(data, col: int, treatment_labels):
         ret_list.append(data[:, -1][np.equal(data[:, col], key)])
 
     return ret_list
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_unique(input_data, axis=0):
-    """Numba-accelerated 2D np.unique(a, return_index=True, return_counts=True)
-
-    Appears to asymptotically approach np.unique's speed
-    when every row is unique, but otherwise runs faster.
-
-    Parameters
-    ----------
-    input_data : 2D numeric array
-    axis : int, optional
-        axis along which to identify unique slices, by default 0
-
-    Returns
-    -------
-    2D array
-        unique rows (or columns) from the input array
-
-    1D array of ints
-        indices of unique rows (or columns) in input array
-
-    1D array of ints
-        number of instances of each unique row
-    """
-
-    # don't want to sort original data
-    if axis == 1:
-        data = input_data.T.copy()
-
-    else:
-        data = input_data.copy()
-
-    # so we can remember the original indexes of each row
-    orig_idx = np.array([i for i in range(data.shape[0])])
-
-    # sort our data AND the original indexes
-    for i in range(data.shape[1] - 1, -1, -1):
-        sorter = data[:, i].argsort(kind="mergesort")
-
-        # mergesort to keep associations
-        data = data[sorter]
-        orig_idx = orig_idx[sorter]
-    # get original indexes
-    idx = [0]
-
-    if data.shape[1] > 1:
-        bool_idx = ~np.all((data[:-1] == data[1:]), axis=1)
-        additional_uniques = np.nonzero(bool_idx)[0] + 1
-
-    else:
-        additional_uniques = np.nonzero(~(data[:-1] == data[1:]))[0] + 1
-
-    idx = np.append(idx, additional_uniques)
-    # get counts for each unique row
-    counts = np.append(idx[1:], data.shape[0])
-    counts = counts - idx
-    return data[idx], orig_idx[idx], counts
 
 
 @nb.jit(nopython=True)
@@ -192,51 +128,6 @@ def bounded_uint(ub):
             m = ub * x
             l = np.uint32(m)
     return m >> 32
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_fast_shuffle(arr):
-    """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers."""
-    i = arr.shape[0] - 1
-    while i > 0:
-        j = bounded_uint(i + 1)
-        arr[i], arr[j] = arr[j], arr[i]
-        i -= 1
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_strat_shuffle(arr, stratification):
-    """Stratified Fisher-Yates shuffle.
-
-    Parameters
-    ----------
-    arr : 1D array-like
-        Target array.
-    stratification : 1D array-like
-        Ranges to shuffle within. Must be sorted.
-    """
-    for low, high in stratification:
-        for i in range(low, high - 1):
-            j = bounded_uint(high - i) + i
-            arr[i], arr[j] = arr[j], arr[i]
-    return arr
-
-
-@nb.jit(nopython=True)
-def nb_chain_from_iterable(iterable: Iterable) -> np.ndarray:
-    """Equivalent to itertools.chain.from_iterable, but produces a
-    numpy array instead of a generator. This is primarily because
-    numba has a memory leak associated with generator functions.
-
-    Parameters
-    ----------
-    iterable : Iterable
-
-    Returns
-    -------
-    np.ndarray
-    """
-    return np.array([x for arr in iterable for x in arr])
 
 
 def msp(items):

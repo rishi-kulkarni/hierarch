@@ -53,35 +53,6 @@ class TestDataGrabber(unittest.TestCase):
                 self._check_samples(data, treatment_col, treatment_labels, ret)
 
 
-class TestNumbaUnique(unittest.TestCase):
-    def _check_unique(self, data, col, ret):
-        """
-        Check that nb_unique returns the same unique values, indices, and counts give
-        the same values as np.unique.
-        """
-        np_ret = np.unique(data[:, :col], return_index=True, return_counts=True, axis=0)
-
-        for idx, v in enumerate(np_ret):
-            np_flat = v.flat
-            nb_flat = ret[idx].flat
-
-            for idx_2, w in enumerate(np_flat):
-                self.assertEqual(w, nb_flat[idx_2])
-
-    def test_nb_unique(self):
-        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [2, 3, [10, 11, 5, 6, 4, 3]])
-        parameters = [[stats.norm, 0, 0], [stats.norm, 0, 0], [stats.norm, 0, 0]]
-        sim = DataSimulator(parameters)
-
-        for hierarchy in hierarchies:
-            sim.fit(hierarchy)
-            data = sim.generate()
-
-            for treatment_col in range(1, data.shape[1]):
-                ret = internal_functions.nb_unique(data[:, :treatment_col])
-                self._check_unique(data, treatment_col, ret)
-
-
 class TestBivarCentralMoment(unittest.TestCase):
     def test_var(self):
         """
@@ -124,29 +95,6 @@ class TestBoundedUInt(unittest.TestCase):
             for idx, v in enumerate(ret):
                 ret[idx] = internal_functions.bounded_uint(ub)
             self._check_bound(ub, ret)
-
-
-class TestFastShuffle(unittest.TestCase):
-    def _check_shuffle(self, original, shuffled):
-        """
-        Check that the shuffled array is the same length as the original one
-        and contains all of the same unique entries.
-        """
-        self.assertEqual(original.size, shuffled.size)
-        orig_unique = np.unique(original)
-        shuffled_unique = np.unique(shuffled)
-        for idx, v in enumerate(orig_unique):
-            self.assertEqual(v, shuffled_unique[idx])
-
-    def test_strat_shuffle(self):
-        original = np.arange(20)
-        original[10:] = 0
-        shuffled = np.arange(20)
-        shuffled[10:] = 0
-        for i in range(50):
-            internal_functions.nb_strat_shuffle(shuffled, ((0, 10), (10, 20)))
-            self._check_shuffle(original, shuffled)
-            self.assertEqual(shuffled[10:].sum(), 0)
 
 
 class TestMultisetPermutations(unittest.TestCase):
