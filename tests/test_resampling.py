@@ -302,7 +302,7 @@ class TestIDClusters(unittest.TestCase):
 
         for hierarchy in hierarchies:
             sim.fit(hierarchy)
-            ret = id_cluster_counts(sim.container[:, :-2])
+            ret = id_cluster_counts(sim.container[:, :-2].copy())
             for idx, level in enumerate(ret):
                 if isinstance(hierarchy[idx], int):
                     for v in iter(level):
@@ -310,31 +310,6 @@ class TestIDClusters(unittest.TestCase):
                 elif isinstance(hierarchy[idx], list):
                     for idx_2, v in enumerate(level):
                         self.assertEqual(hierarchy[idx][idx_2], v)
-
-
-# class TestPermutationDesignInfo(unittest.TestCase):
-#     def test_design_info(self):
-#         design = np.array([[1, 1], [1, 2], [1, 3], [2, 4], [2, 5], [2, 5]])
-
-#         col_values, subclusters, supercluster_idxs = permutation_design_info(
-#             design, col_to_permute=0
-#         )
-
-#         expected_col_values = (1, 1, 1, 2, 2)
-#         self.assertEqual(col_values, expected_col_values)
-
-#         expected_subclusters = np.array([1, 1, 1, 1, 2])
-#         assert_equal(subclusters, expected_subclusters)
-
-#         expected_supercluster_idxs = ((0, 5),)
-#         self.assertEqual(supercluster_idxs, expected_supercluster_idxs)
-
-#     def test_exceptions(self):
-#         design = np.array([1, 2, 3])
-
-#         with self.assertRaises(ValueError) as ex:
-#             permutation_design_info(design, 0)
-#             self.assertIn("design_matrix should be a 2D design matrix", ex.exception)
 
 
 class TestWeightstoIndex(unittest.TestCase):
