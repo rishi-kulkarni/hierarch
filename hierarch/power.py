@@ -1,5 +1,4 @@
 import numpy as np
-import scipy.stats as stats
 
 
 class DataSimulator:
@@ -25,7 +24,6 @@ class DataSimulator:
     """
 
     def __init__(self, paramlist, random_state=None):
-
         self.parameters = paramlist
         self.random_generator = np.random.default_rng(random_state)
 
@@ -66,7 +64,7 @@ class DataSimulator:
                [2., 3., 1., 0.],
                [2., 3., 2., 0.],
                [2., 3., 3., 0.]])
-        
+
 
         """
 
@@ -147,9 +145,7 @@ def _gen_fake_data(reference, params, random_state=None):
     fakedata = np.copy(reference)
     fakedata = fakedata.astype("float64")
     for i in range(reference.shape[1] - 1):
-
         if type(params[i][0]) is not int:
-
             idx, replicates = np.unique(
                 reference[:, : i + 1], return_counts=True, axis=0
             )

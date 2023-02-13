@@ -1,7 +1,6 @@
 import numpy as np
 from hierarch import numba_overloads
 import numba as nb
-import pandas as pd
 
 assert numba_overloads
 
@@ -44,7 +43,6 @@ def nb_data_grabber(data, col: int, treatment_labels):
     ret_list = []
 
     for key in treatment_labels:
-
         # grab values from the data column for each label
         ret_list.append(data[:, -1][np.equal(data[:, col], key)])
 
@@ -177,26 +175,25 @@ def bounded_uint(ub):
     -------
     int
     """
-    x = np.random.randint(low=2 ** 32)
+    x = np.random.randint(low=2**32)
     m = ub * x
-    l = np.uint32(m)
-    if l < ub:
+    lower = np.uint32(m)
+    if lower < ub:
         t = -np.uint32(ub)
         if t >= ub:
             t -= ub
             if t >= ub:
                 t %= ub
-        while l < t:
-            x = np.random.randint(low=2 ** 32)
+        while lower < t:
+            x = np.random.randint(low=2**32)
             m = ub * x
-            l = np.uint32(m)
+            lower = np.uint32(m)
     return m >> 32
 
 
 @nb.jit(nopython=True, cache=True)
 def nb_fast_shuffle(arr):
-    """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers.
-    """
+    """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers."""
     i = arr.shape[0] - 1
     while i > 0:
         j = bounded_uint(i + 1)
@@ -342,7 +339,6 @@ class GroupbyMean:
     """
 
     def __init__(self):
-
         self.cache_dict = {}
 
     def fit(self, reference_data):
@@ -359,7 +355,6 @@ class GroupbyMean:
         reference = reference_data[:, :-1]
 
         for i in reversed(range(1, reference.shape[1])):
-
             reference, counts = nb_unique(reference[:, :-1])[0::2]
 
             self.reference_dict[i] = (reference, counts.astype(np.int64))
@@ -381,15 +376,12 @@ class GroupbyMean:
             for each iteration. Final column values are combined by taking the mean.
         """
         for i in range(iterations):
-
             key = hash((target[:, :-2]).tobytes())
 
             try:
-
                 reduce_at_list, reduce_at_counts = self.cache_dict[key]
 
             except KeyError:
-
                 column = target.shape[1] - 2
 
                 reference, counts = self.reference_dict[column]
@@ -405,7 +397,6 @@ class GroupbyMean:
                 self.cache_dict[key] = reduce_at_list, reduce_at_counts
 
                 if len(self.cache_dict.keys()) > 50:
-
                     self.cache_dict.pop(list(self.cache_dict)[0])
 
             agg_col = np.add.reduceat(target[:, -1], reduce_at_list) / reduce_at_counts
@@ -417,8 +408,7 @@ class GroupbyMean:
         return target
 
     def fit_transform(self, target, reference_data=None, iterations=1):
-        """Combines fit() and transform() for convenience. See those methods for details.
-        """
+        """Combines fit() and transform() for convenience. See those methods for details."""
         if reference_data is None:
             reference_data = target
         self.fit(reference_data)
@@ -462,4 +452,3 @@ def class_make_ufunc_list(target, reference, counts):
             i += counts[(reference == target[i]).flatten()].item()
 
     return ufunc_list
-
