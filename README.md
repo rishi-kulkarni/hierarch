@@ -59,4 +59,4 @@ If hierarch helps you analyze your data, please consider citing it. The manuscri
 contains a set of simulations validating hierarchical randomization tests in a variety of
 conditions.
 
-Analyzing Nested Experimental Designs – A User-Friendly Resampling Method to Determine Experimental Significance. Rishikesh U. Kulkarni, Catherine L. Wang, Carolyn R. Bertozzi. bioRxiv 2021.06.29.450439; doi: https://doi.org/10.1101/2021.06.29.450439
+Kulkarni RU, Wang CL, Bertozzi CR (2022) Analyzing nested experimental designs—A user-friendly resampling method to determine experimental significance. PLoS Comput Biol 18(5): e1010061. https://doi.org/10.1371/journal.pcbi.1010061
