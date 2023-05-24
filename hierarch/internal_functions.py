@@ -175,7 +175,7 @@ def bounded_uint(ub):
     -------
     int
     """
-    x = np.random.randint(low=2**32)
+    x = np.random.randint(low=0, high=2**32)
     m = ub * x
     lower = np.uint32(m)
     if lower < ub:
@@ -185,7 +185,7 @@ def bounded_uint(ub):
             if t >= ub:
                 t %= ub
         while lower < t:
-            x = np.random.randint(low=2**32)
+            x = np.random.randint(low=0, high=2**32)
             m = ub * x
             lower = np.uint32(m)
     return m >> 32
