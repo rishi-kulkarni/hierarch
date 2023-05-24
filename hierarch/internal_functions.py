@@ -14,10 +14,7 @@ def set_numba_random_state(seed: int):
     seed : int32
         Seed for Numba's internal MT PRNG.
     """
-    if type(seed) is nb.int64:
-        np.random.seed(seed)
-    else:
-        raise ValueError("Numba seed must be an integer.")
+    np.random.seed(seed)
 
 
 @nb.jit(nopython=True, cache=True)
@@ -175,7 +172,7 @@ def bounded_uint(ub):
     -------
     int
     """
-    x = np.random.randint(low=2**32)
+    x = np.random.randint(low=0, high=2**32)
     m = ub * x
     lower = np.uint32(m)
     if lower < ub:
@@ -185,7 +182,7 @@ def bounded_uint(ub):
             if t >= ub:
                 t %= ub
         while lower < t:
-            x = np.random.randint(low=2**32)
+            x = np.random.randint(low=0, high=2**32)
             m = ub * x
             lower = np.uint32(m)
     return m >> 32
