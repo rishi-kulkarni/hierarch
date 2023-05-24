@@ -14,10 +14,7 @@ def set_numba_random_state(seed: int):
     seed : int32
         Seed for Numba's internal MT PRNG.
     """
-    if type(seed) is nb.int64:
-        np.random.seed(seed)
-    else:
-        raise ValueError("Numba seed must be an integer.")
+    np.random.seed(seed)
 
 
 @nb.jit(nopython=True, cache=True)

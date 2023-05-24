@@ -18,16 +18,6 @@ class TestSetRandomState(unittest.TestCase):
         for seed in seeds:
             self._try_seed(seed)
 
-    def test_set_random_state_exceptions(self):
-        """
-        Checks that exceptions are raised when seed is not an integer.
-        """
-        seeds = (1.5,)
-        for seed in seeds:
-            with self.assertRaises(ValueError) as raises:
-                self._try_seed(seed)
-            self.assertIn("Numba seed must be an integer.", str(raises.exception))
-
 
 class TestDataGrabber(unittest.TestCase):
     def _check_samples(self, data, treatment_col, treatment_labels, ret):
