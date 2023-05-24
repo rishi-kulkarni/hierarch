@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hierarch"
-version = "1.1.4"
+version = "1.1.5"
 description = "Hierarchical hypothesis testing library"
 authors = ["Rishi Kulkarni <rishi@kulkarni.science>"]
 homepage = "https://github.com/rishi-kulkarni/hierarch"
