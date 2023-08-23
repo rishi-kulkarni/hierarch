@@ -1,15 +1,18 @@
-import numpy as np
-from numba import jit
 import math
+from functools import lru_cache
 from itertools import combinations
+from typing import Collection, Generator, Optional, Union
+from warnings import simplefilter, warn
+
+import numpy as np
 import pandas as pd
+from numba import jit
+
 from hierarch.internal_functions import (
     GroupbyMean,
     bivar_central_moment,
 )
 from hierarch.resampling import Bootstrapper, Permuter
-from warnings import warn, simplefilter
-from functools import lru_cache
 
 
 def _preprocess_data(data):
@@ -1218,3 +1221,102 @@ def _cov_std_error(x, y):
     # correction of n - root(3) is applied
     denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
     return ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
+
+
+def hierarchical_randomization(
+    data_array: Union[np.ndarray, pd.DataFrame],
+    treatment_col: Union[int, str],
+    skip: Optional[Collection[int]] = None,
+    bootstraps: int = 100,
+    permutations: int = 1000,
+    random_state: Optional[Union[int, np.random.Generator]] = None,
+) -> Generator[np.ndarray, None, None]:
+    """Yields permuted datasets for a hierarchical randomization test.
+
+    Parameters
+    ----------
+    data_array : 2D numpy array or pandas DataFrame
+        Array-like containing both the independent and dependent variables to
+        be analyzed. It's assumed that the final (rightmost) column
+        contains the dependent variable values.
+    treatment_col : int or str
+        The index number of the column containing "N samples" to be compared.
+        Indexing starts at 0. If input data is a pandas DataFrame, this can be
+        the column name.
+    skip : list of ints, optional
+        Columns to skip in the bootstrap. Skip columns that were sampled
+        without replacement from the prior column, by default None
+    bootstraps : int, optional
+        Number of bootstraps to perform, by default 100. Can be set to 1 for a
+        permutation test without any bootstrapping.
+    permutations : int, optional
+        Number of permutations to perform PER bootstrap sample. "all"
+        for exact test (only works if there are only two treatments), by default 1000
+    random_state : int or numpy random Generator, optional
+        Seedable for reproducibility., by default None
+
+    Yields
+    ------
+    Generator[np.ndarray, None, None]
+        Permuted data for a hierarchical randomization test.
+
+    """
+    # turns the input array or dataframe into a float64 array
+    if isinstance(data_array, (np.ndarray, pd.DataFrame)):
+        if isinstance(data_array, pd.DataFrame) and isinstance(treatment_col, str):
+            treatment_col = int(data_array.columns.get_loc(treatment_col))
+        data = _preprocess_data(data_array)
+    else:
+        raise TypeError("Input data must be ndarray or DataFrame.")
+
+    assert isinstance(treatment_col, int)  # mypy
+
+    # set random state
+    rng = np.random.default_rng(random_state)
+
+    # enforce lower bound on skip
+    if skip is not None:
+        skip = list(skip)
+        for v in reversed(skip):
+            if v <= treatment_col + 1:
+                warn("No need to include columns before treated columns in skip.")
+                skip.remove(v)
+    else:
+        skip = []
+
+    # enforce bounds on bootstraps and permutations
+    if not isinstance(bootstraps, int) or bootstraps < 1:
+        raise TypeError("bootstraps must be an integer greater than 0")
+    if isinstance(permutations, str):
+        if permutations != "all":
+            raise TypeError("permutations must be 'all' or an integer greater than 0")
+    elif not isinstance(permutations, int) or permutations < 1:
+        raise TypeError("permutations must be 'all' or an integer greater than 0")
+
+    # initialize and fit the bootstrapper to the data
+    bootstrapper = Bootstrapper(random_state=rng, kind="indexes")
+    bootstrapper.fit(data, skip=skip)
+
+    for i in range(bootstraps):
+        # get a bootstrap sample
+        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
+
+        # initialize and fit the permuter to the aggregated data
+        # don't need to seed this, as numba's PRNG state is shared
+        permuter = Permuter()
+
+        if permutations == "all":
+            permuter.fit(bootstrapped_sample, treatment_col, exact=True)
+
+            # in the exact case, determine and set the total number of
+            # possible permutations
+            counts = np.unique(bootstrapped_sample[:, 0], return_counts=True)[1]
+            permutations = _binomial(counts.sum(), counts[0])
+
+        else:
+            # just fit the permuter if this is a randomized test
+            permuter.fit(bootstrapped_sample, treatment_col)
+
+        for j in range(permutations):
+            # yield a permuted sample
+            yield permuter.transform(bootstrapped_sample)
