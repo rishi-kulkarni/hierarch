@@ -16,6 +16,7 @@
       :nosignatures:
    
       confidence_interval
+      hierarchical_randomization
       hypothesis_test
       multi_sample_test
       studentized_covariance
