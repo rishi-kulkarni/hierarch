@@ -205,5 +205,17 @@ class TestConfidenceInterval(unittest.TestCase):
         self.assertGreater(interval_95[1], interval_68[1])
 
 
+class TestHierarchicalRandomization(unittest.TestCase):
+    paramlist = [[0, 2], [stats.norm], [stats.norm]]
+    hierarchy = [2, 4, 3]
+    datagen = DataSimulator(paramlist, random_state=2)
+    datagen.fit(hierarchy)
+    data = datagen.generate()
+
+    def test_randomize(self):
+        for indices in hierarch.stats.hierarchical_randomization(self.data, 0):
+            self.assertEqual(len(indices), len(self.data))
+
+
 if __name__ == "__main__":
     unittest.main()
