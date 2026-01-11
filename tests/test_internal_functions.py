@@ -1,3 +1,4 @@
+import math
 import unittest
 from hierarch import internal_functions
 from hierarch.power import DataSimulator
@@ -192,10 +193,10 @@ class TestMultisetPermutations(unittest.TestCase):
             [1, 1, 1, 2, 2, 2, 3, 3, 3],
         )
         for set in lists:
-            num = np.math.factorial(len(set))
+            num = math.factorial(len(set))
             denom = 1
             for v in iter(np.unique(set, return_counts=True)[1]):
-                denom *= np.math.factorial(v)
+                denom *= math.factorial(v)
             expected_length = num / denom
 
             self.assertEqual(expected_length, len(list(internal_functions.msp(set))))
