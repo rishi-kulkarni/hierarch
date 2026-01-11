@@ -14,10 +14,10 @@ classifiers=[
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.15"
-numpy = ">=1.26"
-numba = ">=0.61"
-scipy = ">=1.10.0"
-pandas = ">=2.0"
+numpy = ">=2.0,<2.3"
+numba = ">=0.63"
+scipy = ">=1.13"
+pandas = ">=2.2.2"
 
 [tool.poetry.group.dev.dependencies]
 black = ">=23.1,<25.0"
