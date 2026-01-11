@@ -2,7 +2,7 @@
 
 ## A Hierarchical Resampling Package for Python
 
-Version 1.1.6
+Version 1.2.0
 
 hierarch is a package for hierarchical resampling (bootstrapping, permutation) of datasets in Python. Because for loops are ultimately intrinsic to cluster-aware resampling, hierarch uses Numba to accelerate many of its key functions.
 
