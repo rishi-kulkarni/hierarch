@@ -33,7 +33,9 @@ jobs:
           poetry config virtualenvs.path ~/.virtualenvs
 
       - name: Install Dependencies
-        run: poetry install
+        run: |
+          rm -f poetry.lock
+          poetry install
 
       - name: Run tests
         run: poetry run pytest
