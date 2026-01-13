@@ -20,7 +20,7 @@ scipy = ">=1.13"
 pandas = ">=2.3.3"
 
 [tool.poetry.group.dev.dependencies]
-black = ">=23.1,<25.0"
+black = ">=23.1,<26.0"
 flake8 = ">=6,<8"
 pytest = ">=7.2.1,<9.0.0"
 sphinx = ">=6.1.3,<8.0.0"
