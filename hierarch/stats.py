@@ -130,6 +130,44 @@ def studentized_covariance(x, y):
 
 
 @jit(nopython=True, cache=True)
+def jackknife_studentized_covariance(x, y):
+    """Studentized sample covariance using jackknife variance estimate.
+
+    Divides the sample covariance by the closed-form jackknife estimate
+    of its standard error. This produces an approximately pivotal test
+    statistic.
+
+    Parameters
+    ----------
+    x, y: numeric array-likes
+
+    Returns
+    -------
+    float64
+        Jackknife studentized covariance.
+    """
+    n = len(x)
+
+    mean_x = 0.0
+    mean_y = 0.0
+    for i in range(n):
+        mean_x += x[i]
+        mean_y += y[i]
+    mean_x /= n
+    mean_y /= n
+
+    S1 = 0.0
+    S2 = 0.0
+    for i in range(n):
+        ab = (x[i] - mean_x) * (y[i] - mean_y)
+        S1 += ab
+        S2 += ab * ab
+
+    t = S1 * (n - 2) / ((n - 1) * (n * S2 - S1 * S1)) ** 0.5
+    return t
+
+
+@jit(nopython=True, cache=True)
 def welch_statistic(sample_a, sample_b):
     """Calculates Welch's t statistic.
 
