@@ -219,7 +219,7 @@ wheels = [
 
 [[package]]
 name = "hierarch"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "numba" },
@@ -239,6 +239,11 @@ dev = [
     { name = "sphinx" },
     { name = "sphinx-rtd-theme" },
 ]
+docs = [
+    { name = "numpydoc" },
+    { name = "sphinx" },
+    { name = "sphinx-rtd-theme" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -254,6 +259,11 @@ dev = [
     { name = "flake8", specifier = ">=6,<8" },
     { name = "numpydoc", specifier = ">=1.5.0,<2.0.0" },
     { name = "pytest", specifier = ">=7.2.1,<9.0.0" },
+    { name = "sphinx", specifier = ">=6.1.3,<8.0.0" },
+    { name = "sphinx-rtd-theme", specifier = ">=1.2,<3.0" },
+]
+docs = [
+    { name = "numpydoc", specifier = ">=1.5.0,<2.0.0" },
     { name = "sphinx", specifier = ">=6.1.3,<8.0.0" },
     { name = "sphinx-rtd-theme", specifier = ">=1.2,<3.0" },
 ]
