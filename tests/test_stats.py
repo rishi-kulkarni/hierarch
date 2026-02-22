@@ -56,6 +56,44 @@ class TestWelch(unittest.TestCase):
         )
 
 
+class TestJackknifeStudentizedCovariance(unittest.TestCase):
+    def test_matches_naive_jackknife(self):
+        """Closed-form must match naive leave-one-out jackknife."""
+        x = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=np.float64)
+        y = np.array([1, 2, 3, 4, 5, 2, 3, 4, 5, 6], dtype=np.float64)
+
+        # Naive jackknife variance of sample covariance
+        n = len(x)
+        cov_full = np.cov(x, y)[0, 1]
+        leave_one_out = np.empty(n)
+        for i in range(n):
+            mask = np.ones(n, dtype=bool)
+            mask[i] = False
+            leave_one_out[i] = np.cov(x[mask], y[mask])[0, 1]
+        var_jack = ((n - 1) / n) * np.sum((leave_one_out - leave_one_out.mean()) ** 2)
+        naive_t = cov_full / np.sqrt(var_jack)
+
+        closed_form_t = hierarch.stats.jackknife_studentized_covariance(x, y)
+        self.assertAlmostEqual(closed_form_t, naive_t)
+
+    def test_multiple_datasets(self):
+        """Verify across several random datasets."""
+        rng = np.random.default_rng(42)
+        for _ in range(10):
+            n = rng.integers(5, 50)
+            x = rng.standard_normal(n)
+            y = rng.standard_normal(n)
+
+            # naive
+            cov_full = np.cov(x, y)[0, 1]
+            loo = np.array([np.cov(np.delete(x, i), np.delete(y, i))[0, 1] for i in range(n)])
+            var_jack = ((n - 1) / n) * np.sum((loo - loo.mean()) ** 2)
+            naive_t = cov_full / np.sqrt(var_jack)
+
+            closed_form_t = hierarch.stats.jackknife_studentized_covariance(x, y)
+            self.assertAlmostEqual(closed_form_t, naive_t, places=10)
+
+
 class TestHypothesisTest(unittest.TestCase):
     import scipy.stats as stats
 
