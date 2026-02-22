@@ -19,23 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.1
 
-      - name: Install Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5.5.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
-      - name: Install Poetry
-        run: pip install poetry
+      - name: Install Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
-      - name: Set Poetry config
-        run: |
-          poetry config virtualenvs.in-project false
-          poetry config virtualenvs.path ~/.virtualenvs
-
-      - name: Install Dependencies
-        run: |
-          rm -f poetry.lock
-          poetry install
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: poetry run pytest
+        run: uv run pytest
