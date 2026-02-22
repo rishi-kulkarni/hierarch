@@ -142,6 +142,25 @@ class TestHypothesisTest(unittest.TestCase):
         )
         self.assertAlmostEqual(corr_p, t_p)
 
+    def test_jackknife_corr_vs_corr(self):
+        jk_p = hierarch.stats.hypothesis_test(
+            self.data,
+            treatment_col=0,
+            compare="jackknife_corr",
+            bootstraps=1000,
+            permutations="all",
+            random_state=1,
+        )
+        corr_p = hierarch.stats.hypothesis_test(
+            self.data,
+            treatment_col=0,
+            compare="corr",
+            bootstraps=1000,
+            permutations="all",
+            random_state=1,
+        )
+        self.assertAlmostEqual(jk_p, corr_p)
+
     def test_hypothesis_exceptions(self):
         with self.assertRaises(TypeError) as raises:
             hierarch.stats.hypothesis_test("ah", 0)
@@ -241,6 +260,30 @@ class TestConfidenceInterval(unittest.TestCase):
         # check that a 95% interval is wider than a 68% interval
         self.assertLess(interval_95[0], interval_68[0])
         self.assertGreater(interval_95[1], interval_68[1])
+
+    def test_jackknife_corr_conf(self):
+        interval_95 = hierarch.stats.confidence_interval(
+            self.data, 0, interval=95, compare="jackknife_corr",
+        )
+        self.assertEqual(len(interval_95), 2)
+
+        interval_68 = hierarch.stats.confidence_interval(
+            self.data, 0, interval=68, compare="jackknife_corr",
+        )
+        self.assertLess(interval_95[0], interval_68[0])
+        self.assertGreater(interval_95[1], interval_68[1])
+
+
+class TestJackknifeStdError(unittest.TestCase):
+    def test_matches_naive(self):
+        x = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=np.float64)
+        y = np.array([1, 2, 3, 4, 5, 2, 3, 4, 5, 6], dtype=np.float64)
+        n = len(x)
+        leave_one_out = np.array([
+            np.cov(np.delete(x, i), np.delete(y, i))[0, 1] for i in range(n)
+        ])
+        naive_se = np.sqrt(((n - 1) / n) * np.sum((leave_one_out - leave_one_out.mean()) ** 2))
+        self.assertAlmostEqual(hierarch.stats._jackknife_cov_std_error(x, y), naive_se)
 
 
 class TestHierarchicalRandomization(unittest.TestCase):

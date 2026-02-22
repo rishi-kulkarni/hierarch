@@ -18,6 +18,7 @@
       confidence_interval
       hierarchical_randomization
       hypothesis_test
+      jackknife_studentized_covariance
       multi_sample_test
       studentized_covariance
       welch_statistic

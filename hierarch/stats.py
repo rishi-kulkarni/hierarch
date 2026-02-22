@@ -240,7 +240,7 @@ def _test_stat_factory(treatment_col, compare):
     treatment_col : 1D tuple
         Treatment column in the design matrix. Needs to be a tuple
         so lru_cache can work.
-    compare : {'means', 'corr'}
+    compare : {'means', 'corr', 'jackknife_corr'}
         Specifies test statistic to return.
 
     Returns
@@ -265,6 +265,9 @@ def _test_stat_factory(treatment_col, compare):
 
     elif compare == "corr":
         return studentized_covariance
+
+    elif compare == "jackknife_corr":
+        return jackknife_studentized_covariance
 
     else:
         raise KeyError("No such comparison.")
@@ -305,9 +308,10 @@ def hypothesis_test(
         The index number of the column containing "two samples" to be compared.
         Indexing starts at 0. If input data is a pandas DataFrame, this can be
         the name of the column.
-    compare : str, optional
+    compare : {'corr', 'means', 'jackknife_corr'} or callable, optional
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
+        "jackknife_corr" uses the jackknife studentized covariance test statistic.
     alternative : {"two-sided", "less", "greater"}
         The alternative hypothesis for the test, "two-sided" by default.
     skip : list of ints, optional
@@ -930,9 +934,10 @@ def confidence_interval(
         If the delta between the current bounds and the target interval is less than
         this value, refinement will stop. Setting this number too close to the Monte Carlo
         error of the underlying hypothesis test will have a negative effect on coverage.
-    compare : str, optional
+    compare : {'corr', 'means', 'jackknife_corr'} or callable, optional
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
+        "jackknife_corr" uses the jackknife studentized covariance test statistic.
     skip : list of ints, optional
         Columns to skip in the bootstrap. Skip columns that were sampled
         without replacement from the prior column, by default None
@@ -1065,11 +1070,16 @@ def confidence_interval(
 
     # make a guess as to the lower and upper bounds of the confidence interval
 
+    if compare == "jackknife_corr":
+        std_error_fn = _jackknife_cov_std_error
+    else:
+        std_error_fn = _cov_std_error
+
     null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
 
-    current_lower = _compute_interval(np.array(null), null_agg, treatment_col, alpha)
+    current_lower = _compute_interval(np.array(null), null_agg, treatment_col, alpha, std_error_fn)
     current_upper = _compute_interval(
-        np.array(null), null_agg, treatment_col, 1 - alpha
+        np.array(null), null_agg, treatment_col, 1 - alpha, std_error_fn
     )
 
     # refine the bounds via iterative hypothesis testing
@@ -1106,7 +1116,7 @@ def confidence_interval(
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
         current_lower = _compute_interval(
-            np.array(null), bound_agg, treatment_col, alpha
+            np.array(null), bound_agg, treatment_col, alpha, std_error_fn
         )
 
     else:
@@ -1139,7 +1149,7 @@ def confidence_interval(
         bound_agg = grouper.transform(bound_imposed_data, iterations=levels_to_agg)
 
         current_upper = _compute_interval(
-            np.array(null), bound_agg, treatment_col, 1 - alpha
+            np.array(null), bound_agg, treatment_col, 1 - alpha, std_error_fn
         )
 
     else:
@@ -1166,7 +1176,7 @@ class ConvergenceWarning(Warning):
 
 
 @jit(nopython=True, cache=True)
-def _compute_interval(null, null_data, treatment_col, quantile):
+def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     """Unpivots a test statistic to a slope.
 
     Parameters
@@ -1177,6 +1187,8 @@ def _compute_interval(null, null_data, treatment_col, quantile):
     treatment_col : int
     quantile : float between 0 and 1
         Quantile of the null distribution to pull test statistic from.
+    std_error_fn : callable
+        Function to compute the standard error of the covariance.
 
     Returns
     -------
@@ -1192,19 +1204,19 @@ def _compute_interval(null, null_data, treatment_col, quantile):
     >>> datagen.fit(hierarchy)
     >>> data = datagen.generate()
     >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
-    >>> _compute_interval(null, data, 0, 0.025)
+    >>> _compute_interval(null, data, 0, 0.025, _cov_std_error)
     -1.6381035977603908
 
     The test statistic distribution is essentially symmetric about 0.
 
-    >>> _compute_interval(null, data, 0, 0.975)
+    >>> _compute_interval(null, data, 0, 0.975, _cov_std_error)
     1.6560744165754229
 
     """
     x = null_data[:, treatment_col]
     y = null_data[:, -1]
 
-    denom = _cov_std_error(x, y)
+    denom = std_error_fn(x, y)
     bound = np.quantile(null, quantile) * denom / bivar_central_moment(x, x)
 
     return bound
@@ -1259,6 +1271,43 @@ def _cov_std_error(x, y):
     # correction of n - root(3) is applied
     denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
     return ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
+
+
+@jit(nopython=True, cache=True)
+def _jackknife_cov_std_error(x, y):
+    """Computes the jackknife standard error of the covariance between
+    two variables.
+
+    This extracts the denominator of ``jackknife_studentized_covariance``
+    so that it can be used by ``_compute_interval`` to unpivot the test
+    statistic back to a slope.
+
+    Parameters
+    ----------
+    x, y : 1D numeric arrays
+
+    Returns
+    -------
+    float
+
+    """
+    n = len(x)
+    mean_x = 0.0
+    mean_y = 0.0
+    for i in range(n):
+        mean_x += x[i]
+        mean_y += y[i]
+    mean_x /= n
+    mean_y /= n
+
+    S1 = 0.0
+    S2 = 0.0
+    for i in range(n):
+        ab = (x[i] - mean_x) * (y[i] - mean_y)
+        S1 += ab
+        S2 += ab * ab
+
+    return ((n - 1) * (n * S2 - S1 * S1)) ** 0.5 / ((n - 1) * (n - 2))
 
 
 def hierarchical_randomization(
