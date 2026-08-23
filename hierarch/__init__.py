@@ -12,3 +12,4 @@ researchers.
 import hierarch.stats
 import hierarch.power
 import hierarch.resampling
+import hierarch.design
