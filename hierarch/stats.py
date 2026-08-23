@@ -257,11 +257,14 @@ def _wrap_custom_statistic(func):
 def _batched_stat_factory(treatment_col, compare):
     """Vectorized counterparts of the built-in test statistics.
 
-    Returns a function mapping a (permutations, n) matrix of permuted
-    treatment columns and an n-vector of dependent values to a vector of
-    test statistics, one per permutation. Each statistic reduces to one or
-    two matrix-vector products because every permutation shares the same
-    multiset of treatment values.
+    Returns a function mapping an (..., n) array of permuted treatment
+    columns and a broadcast-compatible array of dependent values to one
+    test statistic per row. Each statistic depends on the permuted labels
+    only through the contractions sum(x * v) and sum(x^2 * w), so the
+    labels array is read by einsum without materializing intermediates.
+    Callers may pass (permutations, n) labels with an n-vector of values,
+    or (chunk, permutations, n) labels with (chunk, 1, n) values to share
+    one dependent-value row across a block of permutations.
 
     Parameters
     ----------
@@ -273,18 +276,25 @@ def _batched_stat_factory(treatment_col, compare):
         treatment_labels = np.unique(treatment_col)
         if treatment_labels.size != 2:
             raise ValueError("Needs 2 samples.")
-        label_a = treatment_labels[0]
+        label_a, label_b = treatment_labels[0], treatment_labels[1]
 
         def _welch_batch(labels, y):
             n = labels.shape[-1]
-            group_a = (labels == label_a).astype(np.float64)
-            n_a = float((labels.reshape(-1, n)[0] == label_a).sum())
+            n_a = float((np.reshape(labels, (-1, n))[0] == label_a).sum())
             n_b = n - n_a
+            # the group-a indicator is affine in the label values,
+            # 1[x == a] = (b - x) / (b - a), so the group sums follow from
+            # the contractions sum(x * y) and sum(x * y^2)
+            span = label_b - label_a
             y_sq = y * y
-            sum_a = (group_a * y).sum(axis=-1)
-            sum_a_sq = (group_a * y_sq).sum(axis=-1)
-            sum_b = y.sum(axis=-1) - sum_a
-            sum_b_sq = y_sq.sum(axis=-1) - sum_a_sq
+            sum_y = np.sum(y, axis=-1)
+            sum_y_sq = np.sum(y_sq, axis=-1)
+            t1 = np.einsum("...m,...m->...", labels, y)
+            t1_sq = np.einsum("...m,...m->...", labels, y_sq)
+            sum_a = (label_b * sum_y - t1) / span
+            sum_a_sq = (label_b * sum_y_sq - t1_sq) / span
+            sum_b = sum_y - sum_a
+            sum_b_sq = sum_y_sq - sum_a_sq
             mean_diff = sum_a / n_a - sum_b / n_b
             var_a = (sum_a_sq - sum_a**2 / n_a) / (n_a - 1)
             var_b = (sum_b_sq - sum_b**2 / n_b) / (n_b - 1)
@@ -298,16 +308,20 @@ def _batched_stat_factory(treatment_col, compare):
             n = labels.shape[-1]
             # constants come from the sorted multiset so every batch (and the
             # single-row observed-statistic call) computes them bit-identically
-            x_sorted = np.sort(labels.reshape(-1, n)[0])
+            x_sorted = np.sort(np.reshape(labels, (-1, n))[0])
             x_mean = x_sorted.mean()
             x_c_sorted = x_sorted - x_mean
-            y_c = y - y.mean(axis=-1, keepdims=True)
-            prod = (labels - x_mean) * y_c
-            s1 = prod.sum(axis=-1)
-            prod *= prod
-            s2 = prod.sum(axis=-1)
+            y_c = y - np.mean(y, axis=-1, keepdims=True)
+            y_c2 = y_c * y_c
+            sum_yc2 = y_c2.sum(axis=-1)
+            s1 = np.einsum("...m,...m->...", labels, y_c) - x_mean * y_c.sum(
+                axis=-1
+            )
+            t1 = np.einsum("...m,...m->...", labels, y_c2)
+            t2 = np.einsum("...m,...m,...m->...", labels, labels, y_c2)
+            s2 = t2 - 2.0 * x_mean * t1 + x_mean * x_mean * sum_yc2
             var_x = (x_c_sorted * x_c_sorted).sum() / (n - 1)
-            var_y = (y_c * y_c).sum(axis=-1) / (n - 1)
+            var_y = sum_yc2 / (n - 1)
             numerator = s1 / (n - 1)
             denom_1 = s2 / (n - 2**0.5)
             denom_2 = var_x * var_y / (n - 1)
@@ -320,11 +334,15 @@ def _batched_stat_factory(treatment_col, compare):
 
         def _jackknife_batch(labels, y):
             n = labels.shape[-1]
-            y_c = y - y.mean(axis=-1, keepdims=True)
-            prod = (labels - np.sort(labels.reshape(-1, n)[0]).mean()) * y_c
-            s1 = prod.sum(axis=-1)
-            prod *= prod
-            s2 = prod.sum(axis=-1)
+            x_mean = np.sort(np.reshape(labels, (-1, n))[0]).mean()
+            y_c = y - np.mean(y, axis=-1, keepdims=True)
+            y_c2 = y_c * y_c
+            s1 = np.einsum("...m,...m->...", labels, y_c) - x_mean * y_c.sum(
+                axis=-1
+            )
+            t1 = np.einsum("...m,...m->...", labels, y_c2)
+            t2 = np.einsum("...m,...m,...m->...", labels, labels, y_c2)
+            s2 = t2 - 2.0 * x_mean * t1 + x_mean * x_mean * y_c2.sum(axis=-1)
             return s1 * (n - 2) / ((n - 1) * (n * s2 - s1 * s1)) ** 0.5
 
         return _jackknife_batch
@@ -538,7 +556,13 @@ def hypothesis_test(
     # as the null distribution: permutations that reproduce the observed
     # labeling then yield bit-identical statistics, so ties are counted as
     # extreme on both tails no matter how y has been transformed
-    truediff = batched_stat(test[:, treatment_col][None, :], test[:, -1])[0]
+    # contiguous copies, because einsum's accumulation order (and therefore
+    # the exact result) differs between strided column views and the
+    # contiguous rows scored in the null distribution
+    truediff = batched_stat(
+        np.ascontiguousarray(test[:, treatment_col])[None, :],
+        np.ascontiguousarray(test[:, -1]),
+    )[0]
 
     total = bootstraps * permutations
 
@@ -565,18 +589,25 @@ def hypothesis_test(
             + np.arange(permutations)[None, :]
         ) % len(exact_labels)
         labels = exact_labels[rows.reshape(-1)]
-    # score in cache-sized chunks: giant temporaries are slower than medium
-    # ones, so group bootstraps such that each scoring block stays around a
-    # few hundred KB
-    null_distribution = np.empty(total)
-    group = max(1, 16384 // permutations + 1)
-    for c0 in range(0, bootstraps, group):
-        c1 = min(bootstraps, c0 + group)
-        block = labels[c0 * permutations : c1 * permutations]
-        y_block = np.repeat(y_matrix[c0:c1], permutations, axis=0)
-        null_distribution[c0 * permutations : c1 * permutations] = batched_stat(
-            block, y_block
-        )
+    # built-in statistics broadcast one dependent-value row across each
+    # bootstrap's block of permutations, so the whole null distribution is
+    # scored in a single einsum-backed call; custom statistics keep the 2D
+    # (permutations, n) contract, so their rows are materialized in
+    # cache-sized chunks instead
+    if isinstance(compare, str):
+        null_distribution = batched_stat(
+            labels.reshape(bootstraps, permutations, -1), y_matrix[:, None, :]
+        ).reshape(-1)
+    else:
+        null_distribution = np.empty(total)
+        group = max(1, 16384 // permutations + 1)
+        for c0 in range(0, bootstraps, group):
+            c1 = min(bootstraps, c0 + group)
+            block = labels[c0 * permutations : c1 * permutations]
+            y_block = np.repeat(y_matrix[c0:c1], permutations, axis=0)
+            null_distribution[c0 * permutations : c1 * permutations] = batched_stat(
+                block, y_block
+            )
 
     # generate both one-tailed p-values, then two-tailed
     p_less = np.count_nonzero(truediff >= null_distribution) / len(null_distribution)
@@ -1047,7 +1078,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.3391058235442719, 6.1003599292475315)
+    (1.339105823544274, 6.100359929247537)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -1063,7 +1094,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.15334319814774933, 7.59280895093957)
+    (-0.15334319814776087, 7.592808950939554)
 
     A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return the same or a very
@@ -1072,7 +1103,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    compare='means', bootstraps=1000,
     ...    permutations='all', random_state=1)
-    (1.3391058235442719, 6.1003599292475315)
+    (1.339105823544274, 6.100359929247537)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.
@@ -1086,7 +1117,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.83297255712053, 1.6195336227023118)
+    (0.8329725571205298, 1.6195336227023125)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -1270,12 +1301,12 @@ def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     >>> data = datagen.generate()
     >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
     >>> _compute_interval(null, data, 0, 0.025, _cov_std_error)
-    -1.6154082371193477
+    -1.6154082371193446
 
     The test statistic distribution is essentially symmetric about 0.
 
     >>> _compute_interval(null, data, 0, 0.975, _cov_std_error)
-    1.5948320549412573
+    1.594832054941255
 
     """
     x = null_data[:, treatment_col]
