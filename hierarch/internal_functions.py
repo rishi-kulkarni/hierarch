@@ -1,8 +1,5 @@
 import numpy as np
-from hierarch import numba_overloads
 import numba as nb
-
-assert numba_overloads
 
 
 @nb.jit(nopython=True, cache=True)
@@ -215,7 +212,6 @@ def id_cluster_counts(design):
     return cluster_dict
 
 
-@nb.jit(nopython=True, cache=True)
 def weights_to_index(weights):
     """Converts a 1D array of integer weights to indices.
 
@@ -229,14 +225,7 @@ def weights_to_index(weights):
     -------
     indexes: array-like of ints
     """
-
-    indexes = np.empty(weights.sum(), dtype=np.int64)
-    spot = 0
-    for i, v in enumerate(weights):
-        for j in range(v):
-            indexes[spot] = i
-            spot += 1
-    return indexes
+    return np.repeat(np.arange(len(weights)), weights)
 
 
 def msp(items):

@@ -98,7 +98,7 @@ def studentized_covariance(x, y):
     >>> import scipy.stats as stats
     >>> a = np.array([2, 3, 4, 5, 6])
     >>> b = np.array([1, 2, 3, 4, 5])
-    >>> stats.ttest_ind(a, b, equal_var=False)[0]
+    >>> float(stats.ttest_ind(a, b, equal_var=False)[0])
     1.0
 
     """
@@ -203,7 +203,7 @@ def welch_statistic(sample_a, sample_b):
     >>> import scipy.stats as stats
     >>> a = np.array([1, 2, 3, 4, 5])
     >>> b = np.array([10, 11, 12, 13, 14])
-    >>> stats.ttest_ind(a, b, equal_var=False)[0]
+    >>> float(stats.ttest_ind(a, b, equal_var=False)[0])
     -9.0
 
 
@@ -364,7 +364,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
-    0.013714285714285714
+    0.012514285714285714
 
     By setting compare to "means", this function will perform a permutation t-test.
     "corr", which is based on a studentized covariance test statistic, should give the
@@ -374,7 +374,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0, compare='means',
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
-    0.013714285714285714
+    0.012514285714285714
 
     This test can handle data with multiple treatment groups that have a
     hypothesized linear relationship.
@@ -392,7 +392,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.0067
+    0.00682
 
 
     """
@@ -459,9 +459,9 @@ def hypothesis_test(
     test = aggregator.transform(test, iterations=levels_to_agg)
     truediff = teststat(test[:, treatment_col], test[:, -1])
 
-    # initialize and fit the permuter to the aggregated data
-    # don't need to seed this, as numba's PRNG state is shared
-    permuter = Permuter()
+    # initialize and fit the permuter to the aggregated data; the permuter
+    # shuffles via numba's global PRNG, which it seeds from our generator
+    permuter = Permuter(random_state=rng)
 
     if permutations == "all":
         permuter.fit(test, treatment_col, exact=True)
@@ -530,10 +530,10 @@ def hypothesis_test(
         pval += 1 / (total)
 
     if return_null is True:
-        return pval, null_distribution
+        return float(pval), null_distribution
 
     else:
-        return pval
+        return float(pval)
 
 
 def multi_sample_test(
@@ -665,12 +665,12 @@ def multi_sample_test(
     ...                   correction=None, bootstraps=1000,
     ...                   permutations="all", random_state=111)
       Condition 1 Condition 2 p-value
-    0         2.0         3.0  0.0355
-    1         1.0         3.0  0.0394
-    2         3.0         4.0  0.0407
-    3         2.0         4.0  0.1477
-    4         1.0         2.0  0.4022
-    5         1.0         4.0  0.4559
+    0         2.0         3.0  0.0372
+    1         3.0         4.0  0.0388
+    2         1.0         3.0  0.0414
+    3         2.0         4.0  0.1524
+    4         1.0         2.0  0.4031
+    5         1.0         4.0  0.4541
 
     Multiple comparison correction to control False Discovery Rate is advisable in
     this situation. The final column now shows the q-values, or "adjusted" p-values
@@ -680,12 +680,12 @@ def multi_sample_test(
     ...                   correction='fdr', bootstraps=1000,
     ...                   permutations="all", random_state=111)
       Condition 1 Condition 2 p-value Corrected p-value
-    0         2.0         3.0  0.0355            0.0814
-    1         1.0         3.0  0.0394            0.0814
-    2         3.0         4.0  0.0407            0.0814
-    3         2.0         4.0  0.1477           0.22155
-    4         1.0         2.0  0.4022            0.4559
-    5         1.0         4.0  0.4559            0.4559
+    0         2.0         3.0  0.0372            0.0828
+    1         3.0         4.0  0.0388            0.0828
+    2         1.0         3.0  0.0414            0.0828
+    3         2.0         4.0  0.1524            0.2286
+    4         1.0         2.0  0.4031            0.4541
+    5         1.0         4.0  0.4541            0.4541
 
     Perhaps the experimenter is not interested in every pairwise comparison - perhaps
     condition 2 is a control that all other conditions are meant to be compared to.
@@ -696,9 +696,9 @@ def multi_sample_test(
     ...                   correction='fdr', bootstraps=1000,
     ...                   permutations="all", random_state=222)
       Condition 1 Condition 2 p-value Corrected p-value
-    0         2.0         3.0   0.036             0.108
-    1         2.0         4.0  0.1506            0.2259
-    2         2.0         1.0  0.4036            0.4036
+    0         2.0         3.0   0.035             0.105
+    1         2.0         4.0  0.1489           0.22335
+    2         2.0         1.0  0.4066            0.4066
 
 
     """
@@ -983,7 +983,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.3148074506021095, 6.124658302189696)
+    (1.3366519777351944, 6.102813775056613)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -992,14 +992,14 @@ def confidence_interval(
     >>> hypothesis_test(data, treatment_col=0, compare='corr',
     ...                 bootstraps=1000, permutations='all',
     ...                 random_state=1)
-    0.013714285714285714
+    0.012514285714285714
 
     This suggests that while the 95% confidence interval does not contain 0, the 99.5%
     confidence interval should.
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.12320618535452743, 7.562671938146343)
+    (-0.14605181054507144, 7.5855175633368885)
 
     A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return the same or a very
@@ -1008,7 +1008,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    compare='means', bootstraps=1000,
     ...    permutations='all', random_state=1)
-    (1.3148074506021095, 6.124658302189696)
+    (1.3366519777351944, 6.102813775056613)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.
@@ -1022,7 +1022,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.8317584051133189, 1.6192897830814987)
+    (0.833378139209199, 1.6194618200006743)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -1161,7 +1161,7 @@ def confidence_interval(
             stacklevel=2,
         )
 
-    return current_lower + start_slope, current_upper + start_slope
+    return float(current_lower + start_slope), float(current_upper + start_slope)
 
 
 class ConvergenceWarning(Warning):
@@ -1207,12 +1207,12 @@ def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     >>> data = datagen.generate()
     >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
     >>> _compute_interval(null, data, 0, 0.025, _cov_std_error)
-    -1.6381035977603906
+    -1.6152850229879505
 
     The test statistic distribution is essentially symmetric about 0.
 
     >>> _compute_interval(null, data, 0, 0.975, _cov_std_error)
-    1.656074416575423
+    1.6159133301327298
 
     """
     x = null_data[:, treatment_col]
@@ -1390,9 +1390,9 @@ def hierarchical_randomization(
         # get a bootstrap sample
         bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
 
-        # initialize and fit the permuter to the aggregated data
-        # don't need to seed this, as numba's PRNG state is shared
-        permuter = Permuter()
+        # initialize and fit the permuter to the aggregated data; the permuter
+        # shuffles via numba's global PRNG, which it seeds from our generator
+        permuter = Permuter(random_state=rng)
 
         if permutations == "all":
             permuter.fit(bootstrapped_sample, treatment_col, exact=True)
