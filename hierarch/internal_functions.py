@@ -46,12 +46,8 @@ def nb_data_grabber(data, col: int, treatment_labels):
     return ret_list
 
 
-@nb.jit(nopython=True, cache=True)
 def nb_unique(input_data, axis=0):
-    """Numba-accelerated 2D np.unique(a, return_index=True, return_counts=True)
-
-    Appears to asymptotically approach np.unique's speed
-    when every row is unique, but otherwise runs faster.
+    """2D np.unique(a, return_index=True, return_counts=True).
 
     Parameters
     ----------
@@ -70,39 +66,15 @@ def nb_unique(input_data, axis=0):
     1D array of ints
         number of instances of each unique row
     """
-
-    # don't want to sort original data
     if axis == 1:
-        data = input_data.T.copy()
-
-    else:
-        data = input_data.copy()
-
-    # so we can remember the original indexes of each row
-    orig_idx = np.array([i for i in range(data.shape[0])])
-
-    # sort our data AND the original indexes
-    for i in range(data.shape[1] - 1, -1, -1):
-        sorter = data[:, i].argsort(kind="mergesort")
-
-        # mergesort to keep associations
-        data = data[sorter]
-        orig_idx = orig_idx[sorter]
-    # get original indexes
-    idx = [0]
-
-    if data.shape[1] > 1:
-        bool_idx = ~np.all((data[:-1] == data[1:]), axis=1)
-        additional_uniques = np.nonzero(bool_idx)[0] + 1
-
-    else:
-        additional_uniques = np.nonzero(~(data[:-1] == data[1:]))[0] + 1
-
-    idx = np.append(idx, additional_uniques)
-    # get counts for each unique row
-    counts = np.append(idx[1:], data.shape[0])
-    counts = counts - idx
-    return data[idx], orig_idx[idx], counts
+        input_data = input_data.T
+    if input_data.shape[1] == 0:
+        return (
+            input_data[:1],
+            np.zeros(1, dtype=np.intp),
+            np.array([input_data.shape[0]]),
+        )
+    return np.unique(input_data, return_index=True, return_counts=True, axis=0)
 
 
 @nb.jit(nopython=True)
@@ -148,7 +120,6 @@ def bivar_central_moment(x, y, pow=1, ddof=1):
     return moment
 
 
-@nb.jit(nopython=True, cache=True)
 def _repeat(target, counts):
     return np.repeat(np.array(target), counts)
 
@@ -217,11 +188,10 @@ def nb_strat_shuffle(arr, stratification):
             i -= 1
 
 
-@nb.jit(nopython=True, cache=True)
 def id_cluster_counts(design):
     """Identifies the hierarchy in a design matrix.
 
-    Constructs a Typed Dictionary from a tuple of arrays corresponding
+    Constructs a dictionary from a tuple of arrays corresponding
     to number of values described by each cluster in a design matrix.
     This assumes that the design matrix is lexicographically sorted.
 
@@ -231,7 +201,7 @@ def id_cluster_counts(design):
 
     Returns
     -------
-    TypedDict
+    dict
         Each key corresponds to a column index and each value is the number
         of subclusters in each cluster in that column.
     """
@@ -329,14 +299,33 @@ def msp(items):
         yield visit(head)
 
 
+def _row_positions_structured(reference, query):
+    """Positions of query rows within lexsorted reference rows.
+
+    Both arrays must be lexicographically sorted 2D arrays of the same dtype
+    and width, and every query row must be present in reference. Fallback for
+    when the mixed-radix row encoding would overflow int64.
+    """
+    ref_view = reference.view([("", reference.dtype)] * reference.shape[1]).ravel()
+    query = np.ascontiguousarray(query)
+    query_view = query.view([("", query.dtype)] * query.shape[1]).ravel()
+    return np.searchsorted(ref_view, query_view)
+
+
 class GroupbyMean:
     """Class for performing groupby reductions on numpy arrays.
 
-    Currently only supports mean reduction.
+    Currently only supports mean reduction. The fitted reference data
+    (and any array passed to transform) must be lexicographically sorted.
+
+    Because iterated mean-of-means over fixed groups is a linear map on the
+    dependent-variable column, fit() precomputes a per-row coefficient vector
+    for each reduction depth and transform() is a single weighted
+    np.add.reduceat pass regardless of how many levels are aggregated.
     """
 
     def __init__(self):
-        self.cache_dict = {}
+        self._coefficient_cache = {}
 
     def fit(self, reference_data):
         """Fits the class to reference data.
@@ -344,19 +333,73 @@ class GroupbyMean:
         Parameters
         ----------
         reference_data : 2D numeric numpy array
-            Reference data to use for the reduction.
+            Reference data to use for the reduction. Must be
+            lexicographically sorted.
 
         """
-        self.reference_dict = {}
+        reference = np.ascontiguousarray(reference_data[:, :-1])
+        self.reference_keys = reference
+        n, levels = reference.shape
 
-        reference = reference_data[:, :-1]
+        # _starts[k] holds the first-row index of each block when grouping
+        # by the first k design columns
+        starts = [np.zeros(1, dtype=np.intp)]
+        for k in range(1, levels + 1):
+            change = np.any(reference[1:, :k] != reference[:-1, :k], axis=1)
+            starts.append(
+                np.concatenate((np.zeros(1, dtype=np.intp), np.flatnonzero(change) + 1))
+            )
+        self._starts = starts
+        self._coefficient_cache = {}
 
-        for i in reversed(range(1, reference.shape[1])):
-            reference, counts = nb_unique(reference[:, :-1])[0::2]
+        # mixed-radix scalar codes for the reference rows, so resampled-row
+        # lookup is an int64 searchsorted instead of a structured-dtype one
+        uniques = [np.unique(reference[:, j]) for j in range(levels)]
+        sizes = [len(u) for u in uniques]
+        if int(np.prod([1] + sizes, dtype=object)) < 2**62:
+            radix = np.ones(levels, dtype=np.int64)
+            for j in range(levels - 2, -1, -1):
+                radix[j] = radix[j + 1] * sizes[j + 1]
+            codes = np.zeros(n, dtype=np.int64)
+            for j in range(levels):
+                codes += np.searchsorted(uniques[j], reference[:, j]) * radix[j]
+            self._row_codec = (uniques, radix, codes)
+        else:
+            self._row_codec = None
 
-            self.reference_dict[i] = (reference, counts.astype(np.int64))
+    def _row_positions(self, query):
+        """Positions of query rows within the fitted reference rows. Both are
+        lexsorted and every query row must be present in the reference."""
+        if self._row_codec is None:
+            return _row_positions_structured(self.reference_keys, query)
+        uniques, radix, ref_codes = self._row_codec
+        codes = np.zeros(len(query), dtype=np.int64)
+        for j in range(query.shape[1]):
+            codes += np.searchsorted(uniques[j], query[:, j]) * radix[j]
+        return np.searchsorted(ref_codes, codes)
 
-    def transform(self, target, iterations=1):
+    def _coefficients(self, iterations):
+        """Per-row mean-of-means coefficients and output block starts for a
+        given reduction depth."""
+        try:
+            return self._coefficient_cache[iterations]
+        except KeyError:
+            pass
+        n, levels = self.reference_keys.shape
+        coefficients = np.ones(n)
+        child_starts = np.arange(n)
+        for j in range(iterations):
+            block_starts = self._starts[levels - 1 - j]
+            edges = np.searchsorted(child_starts, np.append(block_starts, n))
+            children_per_block = np.diff(edges)
+            rows_per_block = np.diff(np.append(block_starts, n))
+            coefficients *= np.repeat(1.0 / children_per_block, rows_per_block)
+            child_starts = block_starts
+        result = (coefficients, child_starts)
+        self._coefficient_cache[iterations] = result
+        return result
+
+    def transform(self, target, iterations=1, resampled=False):
         """Performs iterative groupby reductions.
 
         Parameters
@@ -365,44 +408,46 @@ class GroupbyMean:
             Array to be reduced.
         iterations : int, optional
             Number of reductions to perform, by default 1
+        resampled : bool, optional
+            Set to True if target is an index-resampled version of the fitted
+            reference data (rows repeated or dropped, as produced by
+            Bootstrapper(kind="indexes")). Row multiplicities are then treated
+            as bootstrap weights over the reference geometry, so the result
+            agrees with aggregating the equivalent kind="weights" sample.
+            By default False, which assumes target has the same row geometry
+            as the fitted reference.
 
         Returns
         -------
         2D numeric array
-            Array with the same number of rows as target data, but one fewer column
-            for each iteration. Final column values are combined by taking the mean.
+            Array with one row per aggregated cluster and one fewer column
+            for each iteration. Final column values are combined by taking
+            the mean.
         """
-        for i in range(iterations):
-            key = hash((target[:, :-2]).tobytes())
-
-            try:
-                reduce_at_list, reduce_at_counts = self.cache_dict[key]
-
-            except KeyError:
-                column = target.shape[1] - 2
-
-                reference, counts = self.reference_dict[column]
-
-                reduce_at_list = class_make_ufunc_list(
-                    target[:, :-2], reference, counts
-                )
-
-                reduce_at_counts = (
-                    np.append(reduce_at_list[1:], target[:, -2].size) - reduce_at_list
-                )
-
-                self.cache_dict[key] = reduce_at_list, reduce_at_counts
-
-                if len(self.cache_dict.keys()) > 50:
-                    self.cache_dict.pop(list(self.cache_dict)[0])
-
-            agg_col = np.add.reduceat(target[:, -1], reduce_at_list) / reduce_at_counts
-
-            target = target[reduce_at_list][:, :-1]
-
-            target[:, -1] = agg_col
-
-        return target
+        if iterations == 0:
+            return target
+        n, levels = self.reference_keys.shape
+        coefficients, out_starts = self._coefficients(iterations)
+        out = np.empty((len(out_starts), levels - iterations + 1))
+        if not resampled:
+            out[:, :-1] = target[out_starts, : levels - iterations]
+            out[:, -1] = np.add.reduceat(coefficients * target[:, -1], out_starts)
+        else:
+            # collapse duplicate rows to (reference row, multiplicity), then
+            # aggregate the multiplicity-weighted values over the reference
+            # geometry; rows absent from the resample get zero weight
+            keys = np.ascontiguousarray(target[:, :-1])
+            change = np.any(keys[1:] != keys[:-1], axis=1)
+            first = np.concatenate(
+                (np.zeros(1, dtype=np.intp), np.flatnonzero(change) + 1)
+            )
+            multiplicity = np.diff(np.append(first, len(target)))
+            positions = self._row_positions(keys[first])
+            weighted = np.zeros(n)
+            weighted[positions] = multiplicity * target[first, -1]
+            out[:, :-1] = self.reference_keys[out_starts, : levels - iterations]
+            out[:, -1] = np.add.reduceat(coefficients * weighted, out_starts)
+        return out
 
     def fit_transform(self, target, reference_data=None, iterations=1):
         """Combines fit() and transform() for convenience. See those methods for details."""
@@ -410,42 +455,3 @@ class GroupbyMean:
             reference_data = target
         self.fit(reference_data)
         return self.transform(target, iterations=iterations)
-
-
-@nb.jit(nopython=True, cache=True)
-def class_make_ufunc_list(target, reference, counts):
-    """Makes a list of indices to perform a ufunc.reduceat operation along.
-
-    This is necessary when an aggregation operation is performed
-    while grouping by a column that was resampled. The target array
-    must be lexsorted.
-
-    Parameters
-    ----------
-    target : 2D numeric array
-        Array that the groupby-aggregate operation will be performed on.
-    reference : 2D numeric array
-        Unique rows in target for the column that will be aggregated to.
-    counts : 1D array of ints
-        Number of times each row in reference should appear in target.
-
-    Returns
-    -------
-    1D array of ints
-        Indices to reduceat along.
-    """
-
-    ufunc_list = np.empty(len(reference), dtype=np.int64)
-    i = 0
-
-    if reference.shape[1] > 1:
-        for idx, _ in enumerate(ufunc_list):
-            ufunc_list[idx] = i
-            i += counts[np.all((reference == target[i]), axis=1)][0]
-
-    else:
-        for idx, _ in enumerate(ufunc_list):
-            ufunc_list[idx] = i
-            i += counts[(reference == target[i]).flatten()].item()
-
-    return ufunc_list

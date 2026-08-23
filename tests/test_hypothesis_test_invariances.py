@@ -225,10 +225,6 @@ class TestInvariances:
         df["mouse"] = df["mouse"].map(lambda v: f"m{int(v)}")
         assert self._p(df, tc="treat") == self._p(data)
 
-    # NB: no xfail_indexes_unbalanced here. hypothesis_test resamples starting
-    # at treatment_col + 2, and at that depth the known indexes-aggregation bug
-    # is not exercised (verified over 200 seeds on an unbalanced 4-level
-    # design); the strict xfail lives on the aggregation-level tests instead.
     @pytest.mark.parametrize("name", design_names())
     def test_indexes_and_weights_kinds_agree(self, name, design_pool):
         hier, data = design_pool[name]
