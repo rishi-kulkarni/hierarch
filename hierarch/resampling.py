@@ -1,6 +1,7 @@
+from dataclasses import dataclass
 from functools import lru_cache
 from itertools import cycle
-from typing import Callable, Dict, Generator, Iterable, Union
+from typing import Callable, Generator, Iterable, Tuple, Union
 
 import numpy as np
 from numba import jit
@@ -13,8 +14,124 @@ from hierarch.internal_functions import (
     nb_strat_shuffle,
     nb_unique,
     set_numba_random_state,
-    weights_to_index,
 )
+
+
+@dataclass(frozen=True)
+class BootstrapPlan:
+    """Precomputed cluster geometry for nested bootstrapping.
+
+    ``children_per_level[k]`` holds the number of level-(k+1) subclusters
+    within each level-k cluster (rows are the deepest level's children), in
+    lexicographic order. ``resampled_levels[k]`` is False for levels listed
+    in ``skip`` at plan time. ``block_starts_per_level`` and
+    ``multinomial_groups_per_level`` are shape-derived lookup tables so that
+    drawing weights spends no time re-deriving geometry: each multinomial
+    group is one ``(size, cluster_indices, scatter_indices, pvals)`` batch of
+    same-sized clusters that can be drawn in a single Generator call.
+    """
+
+    children_per_level: Tuple[np.ndarray, ...]
+    resampled_levels: Tuple[bool, ...]
+    block_starts_per_level: Tuple[np.ndarray, ...]
+    multinomial_groups_per_level: Tuple[tuple, ...]
+
+
+def bootstrap_plan(design: np.ndarray, skip: Iterable[int] = ()) -> BootstrapPlan:
+    """Analyze the hierarchy of a lexsorted design matrix.
+
+    Parameters
+    ----------
+    design : 2D numeric ndarray
+        Design columns only (no dependent-variable column). Must be
+        lexicographically sorted.
+    skip : iterable of ints, optional
+        Levels that should not be resampled when drawing weights.
+
+    Returns
+    -------
+    BootstrapPlan
+    """
+    cluster_dict = id_cluster_counts(design)
+    children = tuple(reversed(list(cluster_dict.values())))
+    skip = frozenset(skip)
+    resampled = tuple(level not in skip for level in range(len(children)))
+
+    starts, groups = [], []
+    for level_children in children:
+        block_starts = np.concatenate(([0], np.cumsum(level_children[:-1])))
+        starts.append(block_starts)
+        level_groups = []
+        for size in np.unique(level_children):
+            clusters = np.flatnonzero(level_children == size)
+            scatter = block_starts[clusters][:, None] + np.arange(size)
+            level_groups.append((int(size), clusters, scatter, [1 / size] * size))
+        groups.append(tuple(level_groups))
+    return BootstrapPlan(children, resampled, tuple(starts), tuple(groups))
+
+
+def draw_bootstrap_weights(
+    plan: BootstrapPlan,
+    rng: np.random.Generator,
+    start: int,
+    kind: str,
+) -> np.ndarray:
+    """Draw one set of per-row bootstrap weights for a fitted plan.
+
+    Parameters
+    ----------
+    plan : BootstrapPlan
+    rng : numpy.random.Generator
+        Source of randomness; advanced by this call.
+    start : int
+        First level to resample.
+    kind : { "weights", "indexes", "bayesian" }
+        "weights" and "indexes" draw integer (Efron) weights; "bayesian"
+        draws continuous Dirichlet weights.
+
+    Returns
+    -------
+    1D array of per-row weights
+        Integer dtype for the Efron bootstrap, float64 for the Bayesian.
+    """
+    if kind == "bayesian":
+        weights = np.ones(len(plan.children_per_level[start]))
+    else:
+        weights = np.ones(len(plan.children_per_level[start]), dtype=np.int64)
+    for level in range(start, len(plan.children_per_level)):
+        children = plan.children_per_level[level]
+        if not plan.resampled_levels[level]:
+            weights = np.repeat(weights, children)
+        elif kind == "bayesian":
+            weights = _draw_dirichlet_level(
+                weights, children, plan.block_starts_per_level[level], rng
+            )
+        else:
+            weights = _draw_multinomial_level(
+                weights,
+                plan.multinomial_groups_per_level[level],
+                int(children.sum()),
+                rng,
+            )
+    return weights
+
+
+def _draw_multinomial_level(weights, groups, total, rng):
+    """One nested Efron resampling step: each cluster's weight is split
+    among its children by a uniform multinomial draw."""
+    out = np.empty(total, dtype=np.int64)
+    for size, clusters, scatter, pvals in groups:
+        out[scatter] = rng.multinomial(size * weights[clusters], pvals)
+    return out
+
+
+def _draw_dirichlet_level(weights, children, block_starts, rng):
+    """One nested Bayesian resampling step: each cluster's weight is split
+    among its children by a flat Dirichlet draw."""
+    gammas = rng.standard_gamma(1.0, size=int(children.sum()))
+    sums = np.add.reduceat(gammas, block_starts)
+    scale = weights * children
+    return gammas / np.repeat(sums, children) * np.repeat(scale, children)
 
 
 class Bootstrapper:
@@ -90,72 +207,72 @@ class Bootstrapper:
     >>> boot = Bootstrapper(random_state=1, kind="weights")
     >>> boot.fit(data, skip=None)
     >>> boot.transform(data, start=1)
-    array([[1., 1., 1., 3.],
-           [1., 1., 2., 0.],
-           [1., 1., 3., 3.],
-           [1., 2., 1., 0.],
-           [1., 2., 2., 0.],
-           [1., 2., 3., 0.],
-           [1., 3., 1., 1.],
-           [1., 3., 2., 1.],
-           [1., 3., 3., 1.],
+    array([[1., 1., 1., 1.],
+           [1., 1., 2., 1.],
+           [1., 1., 3., 1.],
+           [1., 2., 1., 3.],
+           [1., 2., 2., 1.],
+           [1., 2., 3., 2.],
+           [1., 3., 1., 0.],
+           [1., 3., 2., 0.],
+           [1., 3., 3., 0.],
            [2., 1., 1., 0.],
            [2., 1., 2., 0.],
            [2., 1., 3., 0.],
-           [2., 2., 1., 1.],
+           [2., 2., 1., 3.],
            [2., 2., 2., 1.],
-           [2., 2., 3., 1.],
-           [2., 3., 1., 2.],
-           [2., 3., 2., 3.],
-           [2., 3., 3., 1.]])
+           [2., 2., 3., 5.],
+           [2., 3., 1., 0.],
+           [2., 3., 2., 0.],
+           [2., 3., 3., 0.]])
 
     Starting at column 2 means that every column 1 cluster has equal weight.
 
     >>> boot = Bootstrapper(random_state=1, kind="weights")
     >>> boot.fit(data, skip=None)
     >>> boot.transform(data, start=2)
-    array([[1., 1., 1., 2.],
-           [1., 1., 2., 0.],
-           [1., 1., 3., 1.],
+    array([[1., 1., 1., 1.],
+           [1., 1., 2., 2.],
+           [1., 1., 3., 0.],
            [1., 2., 1., 0.],
-           [1., 2., 2., 1.],
-           [1., 2., 3., 2.],
-           [1., 3., 1., 2.],
-           [1., 3., 2., 0.],
+           [1., 2., 2., 3.],
+           [1., 2., 3., 0.],
+           [1., 3., 1., 1.],
+           [1., 3., 2., 1.],
            [1., 3., 3., 1.],
-           [2., 1., 1., 1.],
-           [2., 1., 2., 1.],
+           [2., 1., 1., 2.],
+           [2., 1., 2., 0.],
            [2., 1., 3., 1.],
            [2., 2., 1., 1.],
            [2., 2., 2., 0.],
            [2., 2., 3., 2.],
-           [2., 3., 1., 1.],
+           [2., 3., 1., 2.],
            [2., 3., 2., 1.],
-           [2., 3., 3., 1.]])
+           [2., 3., 3., 0.]])
 
     Skipping column 2 results in only column 1 clusters being resampled.
 
     >>> boot = Bootstrapper(random_state=1, kind="weights")
     >>> boot.fit(data, skip=[2])
     >>> boot.transform(data, start=1)
-    array([[1., 1., 1., 2.],
-           [1., 1., 2., 2.],
-           [1., 1., 3., 2.],
-           [1., 2., 1., 0.],
-           [1., 2., 2., 0.],
-           [1., 2., 3., 0.],
-           [1., 3., 1., 1.],
-           [1., 3., 2., 1.],
-           [1., 3., 3., 1.],
+    array([[1., 1., 1., 1.],
+           [1., 1., 2., 1.],
+           [1., 1., 3., 1.],
+           [1., 2., 1., 2.],
+           [1., 2., 2., 2.],
+           [1., 2., 3., 2.],
+           [1., 3., 1., 0.],
+           [1., 3., 2., 0.],
+           [1., 3., 3., 0.],
            [2., 1., 1., 0.],
            [2., 1., 2., 0.],
            [2., 1., 3., 0.],
-           [2., 2., 1., 1.],
-           [2., 2., 2., 1.],
-           [2., 2., 3., 1.],
-           [2., 3., 1., 2.],
-           [2., 3., 2., 2.],
-           [2., 3., 3., 2.]])
+           [2., 2., 1., 3.],
+           [2., 2., 2., 3.],
+           [2., 2., 3., 3.],
+           [2., 3., 1., 0.],
+           [2., 3., 2., 0.],
+           [2., 3., 3., 0.]])
 
     Changing the algorithm to "indexes" gives a more familiar result.
 
@@ -163,23 +280,23 @@ class Bootstrapper:
     >>> boot.fit(data, skip=None)
     >>> boot.transform(data, start=1)
     array([[1., 1., 1., 1.],
-           [1., 1., 1., 1.],
-           [1., 1., 1., 1.],
+           [1., 1., 2., 1.],
            [1., 1., 3., 1.],
-           [1., 1., 3., 1.],
-           [1., 1., 3., 1.],
-           [1., 3., 1., 1.],
-           [1., 3., 2., 1.],
-           [1., 3., 3., 1.],
+           [1., 2., 1., 1.],
+           [1., 2., 1., 1.],
+           [1., 2., 1., 1.],
+           [1., 2., 2., 1.],
+           [1., 2., 3., 1.],
+           [1., 2., 3., 1.],
+           [2., 2., 1., 1.],
+           [2., 2., 1., 1.],
            [2., 2., 1., 1.],
            [2., 2., 2., 1.],
            [2., 2., 3., 1.],
-           [2., 3., 1., 1.],
-           [2., 3., 1., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 2., 1.],
-           [2., 3., 3., 1.]])
+           [2., 2., 3., 1.],
+           [2., 2., 3., 1.],
+           [2., 2., 3., 1.],
+           [2., 2., 3., 1.]])
 
     The Bayesian bootstrap is the same as the Efron bootstrap, but allows
     the resampled weights to take any real value up to the sum of the original
@@ -188,24 +305,24 @@ class Bootstrapper:
     >>> boot = Bootstrapper(random_state=2, kind="bayesian")
     >>> boot.fit(data, skip=None)
     >>> boot.transform(data, start=1)
-    array([[1.        , 1.        , 1.        , 0.92438197],
-           [1.        , 1.        , 2.        , 1.65820553],
-           [1.        , 1.        , 3.        , 1.31019207],
-           [1.        , 2.        , 1.        , 3.68556477],
-           [1.        , 2.        , 2.        , 0.782951  ],
-           [1.        , 2.        , 3.        , 0.01428243],
-           [1.        , 3.        , 1.        , 0.03969449],
-           [1.        , 3.        , 2.        , 0.04616013],
-           [1.        , 3.        , 3.        , 0.53856761],
-           [2.        , 1.        , 1.        , 4.4725425 ],
-           [2.        , 1.        , 2.        , 1.83458204],
-           [2.        , 1.        , 3.        , 0.16269176],
-           [2.        , 2.        , 1.        , 0.53223701],
-           [2.        , 2.        , 2.        , 0.37478853],
-           [2.        , 2.        , 3.        , 0.07456895],
-           [2.        , 3.        , 1.        , 0.27616575],
-           [2.        , 3.        , 2.        , 0.11271856],
-           [2.        , 3.        , 3.        , 1.15970489]])
+    array([[1.        , 1.        , 1.        , 0.36182397],
+           [1.        , 1.        , 2.        , 0.25496673],
+           [1.        , 1.        , 3.        , 0.73887459],
+           [1.        , 2.        , 1.        , 0.47257995],
+           [1.        , 2.        , 2.        , 1.51837286],
+           [1.        , 2.        , 3.        , 0.29299717],
+           [1.        , 3.        , 1.        , 2.03854886],
+           [1.        , 3.        , 2.        , 2.34934884],
+           [1.        , 3.        , 3.        , 0.97248704],
+           [2.        , 1.        , 1.        , 0.74915905],
+           [2.        , 1.        , 2.        , 0.44384276],
+           [2.        , 1.        , 3.        , 0.75993649],
+           [2.        , 2.        , 1.        , 0.7887371 ],
+           [2.        , 2.        , 2.        , 1.62961596],
+           [2.        , 2.        , 3.        , 0.93041948],
+           [2.        , 3.        , 1.        , 0.57605409],
+           [2.        , 3.        , 2.        , 1.70326713],
+           [2.        , 3.        , 3.        , 1.41896793]])
 
     """
 
@@ -220,14 +337,11 @@ class Bootstrapper:
     ) -> None:
 
         self.random_generator = np.random.default_rng(random_state)
-        # this is a bit hacky, but we use the numpy generator to seed Numba
-        # this makes it both reproducible and thread-safe enough
-        nb_seed = self.random_generator.integers(low=2**32 - 1)
-        set_numba_random_state(nb_seed)
         if kind in self._BOOTSTRAP_ALGORITHMS:
             self.kind = kind
         else:
             raise KeyError("Invalid 'kind' argument.")
+        self._plan = None
 
     def fit(self, data: np.ndarray, skip=None, y=-1) -> None:
         """Fit the bootstrapper to the target data.
@@ -274,21 +388,8 @@ class Bootstrapper:
         else:
             skip = []
 
-        cluster_dict = id_cluster_counts(data[:, :y])
-        cluster_dict = tuple(reversed(list(cluster_dict.values())))
-        cluster_dict = tuple(map(tuple, cluster_dict))
         y %= data.shape[1]
-        shape = y
-
-        columns_to_resample = np.array([True for k in range(shape)])
-        for key in skip:
-            columns_to_resample[key] = False
-
-        kind = str(self.kind)
-
-        self.transform = _bootstrapper_factory(
-            tuple(columns_to_resample), cluster_dict, shape, kind
-        )
+        self._plan = bootstrap_plan(data[:, :y], skip=skip)
 
     def transform(self, data: np.ndarray, start: int) -> np.ndarray:
         """Generate a bootstrapped sample from target data.
@@ -307,99 +408,19 @@ class Bootstrapper:
             according to "kind" argument.
 
         """
-        raise Exception("Use fit() before using transform().")
-
-
-@lru_cache()
-def _bootstrapper_factory(
-    columns_to_resample: int, clusternum_dict: Dict, shape: int, kind: str
-) -> Callable:
-    """Factory function that returns the appropriate transform()."""
-
-    # these helper functions wrap the distributions so that they take the same arguments
-    @jit(nopython=True)
-    def _multinomial_distribution(weights, idx, v):
-        return np.random.multinomial(v * weights[idx], [1 / v] * v)
-
-    @jit(nopython=True)
-    def _dirichlet_distribution(weights, idx, v):
-        return (
-            np.random.dirichlet([1 for a in range(v.item())], size=None)
-            * weights[idx]
-            * v.item()
+        if self._plan is None:
+            raise Exception("Use fit() before using transform().")
+        weights = draw_bootstrap_weights(
+            self._plan, self.random_generator, start, self.kind
         )
-
-    @jit(nopython=True)
-    def _bootstrap_algorithm(data, start):
-        # at the start, everything is weighted equally
-        weights = np.array([1 for i in clusternum_dict[start]], dtype=_weight_dtype)
-
-        for key in range(start, shape):
-            # fetch design matrix info for current column
-            to_do = clusternum_dict[key]
-            # preallocate the full array for new_weight
-            new_weight = np.empty(to_do.sum(), _weight_dtype)
-            place = 0
-
-            # if not resampling this column, new_weight is the prior column's weights
-            if not columns_to_resample[key]:
-                for idx, v in enumerate(to_do):
-                    new_weight[place : place + v] = np.array(
-                        [weights[idx] for m in range(v.item())]
-                    )
-                    place += v
-
-            # else do a multinomial experiment to generate new_weight
-            else:
-                for idx, v in enumerate(to_do):
-                    # v*weights[idx] carries over weights from previous columns
-                    new_weight[place : place + v] = _dist(weights, idx, v)
-                    place += v
-
-            weights = new_weight
-
-        return weights
-
-    clusternum_dict = tuple(np.array(cluster) for cluster in clusternum_dict)
-    columns_to_resample = np.array(columns_to_resample)
-
-    if kind in ("weights", "indexes"):
-        _weight_dtype = np.int64
-        _dist = _multinomial_distribution
-
-    elif kind in ("bayesian"):
-        # bayesian bootstrap produces non-integer weights
-        _weight_dtype = np.float64
-        _dist = _dirichlet_distribution
-
-    if kind in ("weights", "bayesian"):
-
-        @jit(nopython=True)
-        def _bootstrapper_impl(data, start):
-            out = data.astype(np.float64)
-            weights = _bootstrap_algorithm(out, start)
-            out[:, -1] = out[:, -1] * weights
-            return out
-
-    elif kind == "indexes":
-
-        @jit(nopython=True)
-        def _bootstrapper_impl(data, start):
-            out = data.astype(np.float64)
-            weights = _bootstrap_algorithm(out, start)
-            indexes = weights_to_index(weights)
-            return out[indexes]
-
-    else:
-        raise KeyError(
-            "No such bootstrapping algorithm. kind must be 'weights' or 'indexes' or 'bayesian'"
-        )
-
-    return _bootstrapper_impl
+        out = data.astype(np.float64)
+        if self.kind == "indexes":
+            return out[np.repeat(np.arange(out.shape[0]), weights)]
+        out[:, -1] = out[:, -1] * weights
+        return out
 
 
 class Permuter:
-
     """Class for performing cluster-aware permutation on a target column.
 
     Parameters
@@ -518,7 +539,7 @@ class Permuter:
         # this keeps us from having to do unnecessary flow control
 
         if exact is True:
-            col_values = values[:, -2].copy()
+            col_values = values[:, -2].tolist()
             self.iterator = cycle(msp(col_values))
             if len(col_values) == len(data):
                 self.transform = _exact_return(col_to_permute, self.iterator)
