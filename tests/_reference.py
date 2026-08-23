@@ -172,12 +172,26 @@ def pvalue_from_null(observed, null, alternative):
 
 
 def distinct_permutations(x):
-    """All distinct orderings of the multiset x (brute force via a set)."""
-    seen = set()
-    for perm in itertools.permutations(x):
-        if perm not in seen:
-            seen.add(perm)
-            yield np.array(perm, dtype=np.float64)
+    """All distinct orderings of the multiset x.
+
+    Textbook recursion: at each position, place each *unique* remaining value
+    (the input is sorted, so duplicates are adjacent and skipped). This visits
+    only the distinct orderings rather than filtering all n! of them, and shares
+    no structure with hierarch's Takaoka-linked-list ``msp``.
+    """
+
+    def rec(remaining):
+        if not remaining:
+            yield ()
+            return
+        for i, v in enumerate(remaining):
+            if i and v == remaining[i - 1]:
+                continue
+            for rest in rec(remaining[:i] + remaining[i + 1 :]):
+                yield (v,) + rest
+
+    for perm in rec(sorted(x)):
+        yield np.array(perm, dtype=np.float64)
 
 
 def distinct_stratified_permutations(x, strata):
