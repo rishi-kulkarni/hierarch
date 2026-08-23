@@ -498,7 +498,7 @@ def hypothesis_test(
         # treated level
         bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
         bootstrapped_sample = aggregator.transform(
-            bootstrapped_sample, iterations=levels_to_agg
+            bootstrapped_sample, iterations=levels_to_agg, resampled=(kind == "indexes")
         )
 
         # generate permuted samples, calculate test statistic,
@@ -983,7 +983,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.314807450602109, 6.124658302189696)
+    (1.3148074506021095, 6.124658302189696)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -999,7 +999,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.12320618535452432, 7.56267193814634)
+    (-0.12320618535452743, 7.562671938146343)
 
     A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return the same or a very
@@ -1008,7 +1008,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    compare='means', bootstraps=1000,
     ...    permutations='all', random_state=1)
-    (1.314807450602109, 6.124658302189696)
+    (1.3148074506021095, 6.124658302189696)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.
@@ -1022,7 +1022,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.8317584051133191, 1.6192897830814992)
+    (0.8317584051133189, 1.6192897830814987)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -1077,7 +1077,9 @@ def confidence_interval(
 
     null_agg = grouper.transform(null_imposed_data, iterations=levels_to_agg)
 
-    current_lower = _compute_interval(np.array(null), null_agg, treatment_col, alpha, std_error_fn)
+    current_lower = _compute_interval(
+        np.array(null), null_agg, treatment_col, alpha, std_error_fn
+    )
     current_upper = _compute_interval(
         np.array(null), null_agg, treatment_col, 1 - alpha, std_error_fn
     )
@@ -1205,12 +1207,12 @@ def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     >>> data = datagen.generate()
     >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
     >>> _compute_interval(null, data, 0, 0.025, _cov_std_error)
-    -1.6381035977603908
+    -1.6381035977603906
 
     The test statistic distribution is essentially symmetric about 0.
 
     >>> _compute_interval(null, data, 0, 0.975, _cov_std_error)
-    1.6560744165754229
+    1.656074416575423
 
     """
     x = null_data[:, treatment_col]

@@ -30,7 +30,7 @@ def _is_balanced(hier):
 
 
 class TestBootstrapKindsAgree:
-    @pytest.mark.parametrize("name", design_names(xfail_indexes_unbalanced=True))
+    @pytest.mark.parametrize("name", design_names())
     def test_indexes_and_weights_agree_after_aggregation(self, name, design_pool):
         """Documented contract: 'indexes' and 'weights' describe the same
         resample; once aggregated up to the level the bootstrap started from,
@@ -52,7 +52,7 @@ class TestBootstrapKindsAgree:
                 g.fit(data)
                 np.testing.assert_allclose(
                     g.transform(w_out, iterations=iterations),
-                    g.transform(i_out, iterations=iterations),
+                    g.transform(i_out, iterations=iterations, resampled=True),
                 )
 
 
@@ -69,9 +69,7 @@ class TestGroupbyMeanContract:
 
     @pytest.mark.parametrize(
         "name, kind",
-        design_names(
-            xfail_indexes_unbalanced=True, kinds=["weights", "indexes", "bayesian"]
-        ),
+        design_names(kinds=["weights", "indexes", "bayesian"]),
     )
     def test_aggregating_a_bootstrap_sample_gives_the_nested_weighted_mean(
         self, name, kind, design_pool
@@ -111,7 +109,9 @@ class TestGroupbyMeanContract:
                 g = GroupbyMean()
                 g.fit(data)
                 np.testing.assert_allclose(
-                    g.transform(sample, iterations=iterations),
+                    g.transform(
+                        sample, iterations=iterations, resampled=(kind == "indexes")
+                    ),
                     nested_weighted_mean(data, w, iterations),
                     atol=1e-12,
                 )

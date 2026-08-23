@@ -55,33 +55,11 @@ def rng():
     return np.random.default_rng(12345)
 
 
-def _is_balanced(hier):
-    return all(isinstance(h, int) for h in hier)
-
-
-KNOWN_BUG_INDEXES_UNBALANCED = (
-    "known bug: kind='indexes' aggregates incorrectly on unbalanced designs with >= 4 "
-    "levels (class_make_ufunc_list allocates len(reference) blocks, but two resampled "
-    "levels down an index resample of an unbalanced design has sum(w_c * k_c) blocks)"
-)
-
-
-def design_names(xfail_indexes_unbalanced=False, kinds=None):
-    """pytest.param list over the design pool, optionally crossed with `kinds`,
-    with the known-bug combinations marked xfail(strict=True)."""
+def design_names(kinds=None):
+    """pytest.param list over the design pool, optionally crossed with `kinds`."""
     params = []
-    for name, hier in DESIGN_POOL.items():
+    for name in DESIGN_POOL:
         for kind in kinds or [None]:
-            marks = []
-            if (
-                xfail_indexes_unbalanced
-                and (kind == "indexes" or kind is None)
-                and not _is_balanced(hier)
-                and len(hier) >= 4
-            ):
-                marks.append(
-                    pytest.mark.xfail(strict=True, reason=KNOWN_BUG_INDEXES_UNBALANCED)
-                )
             args = (name,) if kind is None else (name, kind)
-            params.append(pytest.param(*args, marks=marks, id="-".join(map(str, args))))
+            params.append(pytest.param(*args, id="-".join(map(str, args))))
     return params
