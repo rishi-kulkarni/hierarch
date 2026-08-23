@@ -1,46 +1,4 @@
 import numpy as np
-import numba as nb
-
-
-@nb.jit(nopython=True, cache=True)
-def set_numba_random_state(seed: int):
-    """Helper function to set numba's RNG seed.
-
-    Parameters
-    ----------
-    seed : int32
-        Seed for Numba's internal MT PRNG.
-    """
-    np.random.seed(seed)
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_data_grabber(data, col: int, treatment_labels):
-    """Numba-accelerated fancy indexing. Assumes values to grab
-    are in column index: -1.
-
-    Parameters
-    ----------
-    data : 2D array
-        Target data.
-    col : int
-        Index of target column.
-    treatment_labels : 1D array or list
-        Labels in target column to parse.
-
-    Returns
-    -------
-    list of 1D arrays
-        Values from col: -1 corresponding to the treatment_labels in target column.
-    """
-
-    ret_list = []
-
-    for key in treatment_labels:
-        # grab values from the data column for each label
-        ret_list.append(data[:, -1][np.equal(data[:, col], key)])
-
-    return ret_list
 
 
 def nb_unique(input_data, axis=0):
@@ -74,7 +32,6 @@ def nb_unique(input_data, axis=0):
     return np.unique(input_data, return_index=True, return_counts=True, axis=0)
 
 
-@nb.jit(nopython=True)
 def bivar_central_moment(x, y, pow=1, ddof=1):
     """Computes the bivariate central moment.
 
@@ -99,90 +56,16 @@ def bivar_central_moment(x, y, pow=1, ddof=1):
     This ddof correction is only valid for the first product central moment (covariance).
     Simply doing ddof=2 does not provide an unbiased estimator for higher order moments.
     """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
     n = len(x)
-
-    mean_x = mean_y = 0
-    for i in range(n):
-        mean_x += x[i]
-        mean_y += y[i]
-    mean_x /= n
-    mean_y /= n
-
-    sum_of_prods = 0
-    for x_, y_ in zip(x, y):
-        sum_of_prods += ((x_ - mean_x) ** pow) * ((y_ - mean_y) ** pow)
-
-    moment = sum_of_prods / (n - ddof)
-
-    return moment
+    xc = x - x.mean()
+    yc = y - y.mean()
+    return np.sum((xc**pow) * (yc**pow)) / (n - ddof)
 
 
 def _repeat(target, counts):
     return np.repeat(np.array(target), counts)
-
-
-@nb.jit(nopython=True, inline="always")
-def bounded_uint(ub):
-    """Produces an unbiased random integer within the half-open set of 0 to ub.
-
-    Based on Daniel Lemire's implementation.
-
-    Notes
-    -----
-    https://lemire.me/blog/2019/06/06/nearly-divisionless-random-integer-generation-on-various-systems/
-
-    Parameters
-    ----------
-    ub : int
-        The upper bound plus one.
-
-    Returns
-    -------
-    int
-    """
-    x = np.random.randint(low=0, high=2**32)
-    m = ub * x
-    lower = np.uint32(m)
-    if lower < ub:
-        t = -np.uint32(ub)
-        if t >= ub:
-            t -= ub
-            if t >= ub:
-                t %= ub
-        while lower < t:
-            x = np.random.randint(low=0, high=2**32)
-            m = ub * x
-            lower = np.uint32(m)
-    return m >> 32
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_fast_shuffle(arr):
-    """Reimplementation of Fisher-Yates shuffle using bounded_uint to generate random numbers."""
-    i = arr.shape[0] - 1
-    while i > 0:
-        j = bounded_uint(i + 1)
-        arr[i], arr[j] = arr[j], arr[i]
-        i -= 1
-
-
-@nb.jit(nopython=True, cache=True)
-def nb_strat_shuffle(arr, stratification):
-    """Stratified Fisher-Yates shuffle.
-
-    Parameters
-    ----------
-    arr : 1D array-like
-        Target array.
-    stratification : 1D array-like
-        Ranges to shuffle within. Must be sorted.
-    """
-    for v, w in zip(stratification[:-1], stratification[1:]):
-        i = w - v - 1
-        while i > 0:
-            j = bounded_uint(i + 1)
-            arr[i + v], arr[j + v] = arr[j + v], arr[i + v]
-            i -= 1
 
 
 def id_cluster_counts(design):

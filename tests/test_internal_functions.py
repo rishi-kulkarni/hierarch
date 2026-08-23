@@ -7,44 +7,6 @@ import numpy as np
 import pandas as pd
 
 
-class TestSetRandomState(unittest.TestCase):
-    def _try_seed(self, seed):
-        internal_functions.set_numba_random_state(seed)
-
-    def test_set_random_state(self):
-        """
-        Test normal behavior
-        """
-        seeds = (1, 1000, 2**32)
-        for seed in seeds:
-            self._try_seed(seed)
-
-
-class TestDataGrabber(unittest.TestCase):
-    def _check_samples(self, data, treatment_col, treatment_labels, ret):
-        """
-        Check lengths of grabbed samples.
-        """
-        for idx, key in enumerate(treatment_labels):
-            self.assertEqual(ret[idx].size, (data[:, treatment_col] == key).sum())
-
-    def test_data_grabber(self):
-        hierarchies = ([2, 3, 3], [2, [4, 3], 3], [2, 3, [10, 11, 5, 6, 4, 3]])
-        parameters = [[stats.norm, 0, 0], [stats.norm, 0, 0], [stats.norm, 0, 0]]
-        sim = DataSimulator(parameters)
-
-        for hierarchy in hierarchies:
-            sim.fit(hierarchy)
-            data = sim.generate()
-
-            for treatment_col in range(data.shape[1] - 1):
-                treatment_labels = np.unique(data[:, treatment_col])
-                ret = internal_functions.nb_data_grabber(
-                    data, treatment_col, treatment_labels
-                )
-                self._check_samples(data, treatment_col, treatment_labels, ret)
-
-
 class TestNumbaUnique(unittest.TestCase):
     def _check_unique(self, data, col, ret):
         """
@@ -98,56 +60,6 @@ class TestBivarCentralMoment(unittest.TestCase):
         for ddof in ddofs:
             ret = internal_functions.bivar_central_moment(x, y, pow=1, ddof=ddof)
             self.assertAlmostEqual(ret, np.cov(x, y, ddof=ddof)[0, 1])
-
-
-class TestBoundedUInt(unittest.TestCase):
-    def _check_bound(self, ub, ret):
-        """
-        Check that all generated numbers are smaller than the upper bound.
-        """
-        for v in iter(ret):
-            self.assertLess(v, ub)
-
-    def test_bounded_int(self):
-        ubs = (10, 100, 1000, 10000)
-        for ub in ubs:
-            size = 10000
-            ret = np.empty(size)
-            for idx, v in enumerate(ret):
-                ret[idx] = internal_functions.bounded_uint(ub)
-            self._check_bound(ub, ret)
-
-
-class TestFastShuffle(unittest.TestCase):
-    def _check_shuffle(self, original, shuffled):
-        """
-        Check that the shuffled array is the same length as the original one
-        and contains all of the same unique entries.
-        """
-        self.assertEqual(original.size, shuffled.size)
-        orig_unique = np.unique(original)
-        shuffled_unique = np.unique(shuffled)
-        for idx, v in enumerate(orig_unique):
-            self.assertEqual(v, shuffled_unique[idx])
-
-    def test_shuffle(self):
-        lengths = (5, 10, 100, 500)
-        for length in lengths:
-            original = np.arange(length)
-            shuffled = np.arange(length)
-            for i in range(50):
-                internal_functions.nb_fast_shuffle(shuffled)
-                self._check_shuffle(original, shuffled)
-
-    def test_strat_shuffle(self):
-        original = np.arange(20)
-        original[10:] = 0
-        shuffled = np.arange(20)
-        shuffled[10:] = 0
-        for i in range(50):
-            internal_functions.nb_strat_shuffle(shuffled, (0, 10, 20))
-            self._check_shuffle(original, shuffled)
-            self.assertEqual(shuffled[10:].sum(), 0)
 
 
 class TestIDClusters(unittest.TestCase):
