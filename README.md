@@ -35,7 +35,6 @@ Design-based randomization tests represents the platinum standard for significan
 
 - numpy
 - pandas (for importing data)
-- numba
 - scipy (for power analysis)
 
 ### Installation
