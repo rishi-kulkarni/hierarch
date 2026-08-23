@@ -1,19 +1,13 @@
 from dataclasses import dataclass
-from functools import lru_cache
 from itertools import cycle
-from typing import Callable, Generator, Iterable, Tuple, Union
+from typing import Iterable, Tuple, Union
 
 import numpy as np
-from numba import jit
 
 from hierarch.internal_functions import (
     _repeat,
     id_cluster_counts,
     msp,
-    nb_fast_shuffle,
-    nb_strat_shuffle,
-    nb_unique,
-    set_numba_random_state,
 )
 
 
@@ -113,6 +107,64 @@ def draw_bootstrap_weights(
                 int(children.sum()),
                 rng,
             )
+    return weights
+
+
+def draw_bootstrap_weights_batch(
+    plan: BootstrapPlan,
+    rng: np.random.Generator,
+    start: int,
+    kind: str,
+    size: int,
+) -> np.ndarray:
+    """Draw ``size`` independent sets of per-row bootstrap weights at once.
+
+    Equivalent to ``size`` calls of :func:`draw_bootstrap_weights` (with a
+    different stream consumption), but each resampling level is drawn for
+    every replicate in a single Generator call.
+
+    Parameters
+    ----------
+    plan : BootstrapPlan
+    rng : numpy.random.Generator
+        Source of randomness; advanced by this call.
+    start : int
+        First level to resample.
+    kind : { "weights", "indexes", "bayesian" }
+    size : int
+        Number of independent weight sets to draw.
+
+    Returns
+    -------
+    2D array of shape (size, number of rows)
+    """
+    if kind == "bayesian":
+        weights = np.ones((size, len(plan.children_per_level[start])))
+    else:
+        weights = np.ones((size, len(plan.children_per_level[start])), dtype=np.int64)
+    for level in range(start, len(plan.children_per_level)):
+        children = plan.children_per_level[level]
+        total = int(children.sum())
+        if not plan.resampled_levels[level]:
+            weights = np.repeat(weights, children, axis=1)
+        elif kind == "bayesian":
+            gammas = rng.standard_gamma(1.0, size=(size, total))
+            sums = np.add.reduceat(gammas, plan.block_starts_per_level[level], axis=1)
+            scale = weights * children
+            weights = (
+                gammas
+                / np.repeat(sums, children, axis=1)
+                * np.repeat(scale, children, axis=1)
+            )
+        else:
+            out = np.empty((size, total), dtype=np.int64)
+            for csize, clusters, scatter, pvals in plan.multinomial_groups_per_level[
+                level
+            ]:
+                flat_n = (csize * weights[:, clusters]).ravel()
+                draws = rng.multinomial(flat_n, pvals)
+                out[:, scatter] = draws.reshape(size, len(clusters), csize)
+            weights = out
     return weights
 
 
@@ -456,11 +508,11 @@ class Permuter:
     >>> permute.fit(test, col_to_permute=0, exact=False)
     >>> permute.transform(test)
     array([[2., 1., 1.],
-           [2., 2., 1.],
-           [1., 3., 1.],
-           [2., 1., 1.],
            [1., 2., 1.],
-           [1., 3., 1.]])
+           [1., 3., 1.],
+           [1., 1., 1.],
+           [2., 2., 1.],
+           [2., 3., 1.]])
 
     If exact=True, Permuter will not repeat a permutation until all possible
     permutations have been exhausted.
@@ -487,12 +539,12 @@ class Permuter:
     >>> permute = Permuter(random_state=2)
     >>> permute.fit(test, col_to_permute=1, exact=False)
     >>> permute.transform(test)
-    array([[1., 1., 1.],
+    array([[1., 3., 1.],
+           [1., 1., 1.],
            [1., 2., 1.],
-           [1., 3., 1.],
+           [2., 3., 1.],
            [2., 2., 1.],
-           [2., 1., 1.],
-           [2., 3., 1.]])
+           [2., 1., 1.]])
 
     Exact within-cluster permutations are not implemented, but there are typically
     too many to be worth attempting.
@@ -508,9 +560,8 @@ class Permuter:
         self, random_state: Union[np.random.Generator, int, None] = None
     ) -> None:
         self.random_generator = np.random.default_rng(random_state)
-        if random_state is not None:
-            nb_seed = self.random_generator.integers(low=2**32)
-            set_numba_random_state(nb_seed)
+        self._plan = None
+        self._exact = False
 
     def fit(self, data: np.ndarray, col_to_permute: int, exact: bool = False) -> None:
         """Fit the permuter to the target data.
@@ -526,48 +577,23 @@ class Permuter:
             iterate through them one by one, by default False. Only
             works if target column has index 0.
         """
-        values, indexes, counts = np.unique(
-            data[:, : col_to_permute + 2], return_index=True, return_counts=True, axis=0
-        )
-
         if col_to_permute != 0 and exact is True:
             raise NotImplementedError(
                 "Exact permutation only available for col_to_permute = 0."
             )
 
-        # transform() is going to be called a lot, so generate a specialized version on the fly
-        # this keeps us from having to do unnecessary flow control
+        self._exact = exact
+        self._col = col_to_permute
 
         if exact is True:
+            values, counts = np.unique(
+                data[:, : col_to_permute + 2], return_counts=True, axis=0
+            )
             col_values = values[:, -2].tolist()
             self.iterator = cycle(msp(col_values))
-            if len(col_values) == len(data):
-                self.transform = _exact_return(col_to_permute, self.iterator)
-            else:
-                self.transform = _exact_repeat_return(
-                    col_to_permute, self.iterator, counts
-                )
-
+            self._counts = None if len(col_values) == len(data) else counts
         else:
-            try:
-                values[:, -3]
-                keys = nb_unique(values[:, :-2])[1]
-                keys = np.append(keys, values[:, -3].shape[0])
-            except IndexError:
-                keys = np.zeros(1, dtype=np.int64)
-                keys = np.append(keys, values[:, -2].shape[0])
-            keys = tuple(keys.tolist())
-
-            if indexes.size == len(data):
-                self.transform = _random_return(col_to_permute, keys)
-
-            else:
-                col_values = data[:, col_to_permute][indexes]
-                col_values = tuple(col_values.tolist())
-                counts = tuple(counts.tolist())
-                self.transform = _random_repeat_return(
-                    col_to_permute, col_values, keys, counts
-                )
+            self._plan = permutation_plan(data, col_to_permute)
 
     def transform(self, data: np.ndarray) -> np.ndarray:
         """Permute target column in-place.
@@ -582,82 +608,117 @@ class Permuter:
         data : 2D numeric ndarray
             Original data with target column shuffled, in a stratified fashion if necessary.
         """
-
-        # this method is defined on the fly in fit() based one of the
-        # four static methods defined below
-        raise Exception("Use fit() before using transform().")
-
-
-def _exact_return(
-    col_to_permute: int, generator: Generator[Iterable, None, None]
-) -> Callable:
-    """Transformer when exact is True and permutations are unrestricted."""
-
-    def _exact_return_impl(data):
-        data[:, col_to_permute] = next(generator)
+        if self._exact:
+            labels = next(self.iterator)
+            if self._counts is not None:
+                labels = _repeat(tuple(labels), self._counts)
+            data[:, self._col] = labels
+        elif self._plan is not None:
+            data[:, self._col] = draw_permuted_labels(
+                self._plan, self.random_generator, 1
+            )[0]
+        else:
+            raise Exception("Use fit() before using transform().")
         return data
 
-    return _exact_return_impl
 
+@dataclass(frozen=True)
+class PermutationPlan:
+    """Precomputed structure for cluster-aware permutation of one column.
 
-def _exact_repeat_return(
-    col_to_permute: int, generator: Generator[Iterable, None, None], counts: Iterable
-) -> Callable:
-    """Transformer when exact is True and permutations are restricted by
-    repetition of treated entities.
+    A permutable *unit* is a distinct row of the design columns up to and
+    including the column after the target column: whole clusters move
+    together when the target column is above the row level. ``unit_values``
+    holds each unit's target-column value; ``stratum_starts`` bounds the
+    runs of units that may exchange values (a single [0, n] stratum when
+    the target column is column 0); ``row_repeats`` expands unit labels
+    back to data rows, or None when units and rows coincide.
     """
 
-    def _rep_iter_return_impl(data):
-        data[:, col_to_permute] = _repeat(tuple(next(generator)), counts)
-        return data
+    col: int
+    unit_values: np.ndarray
+    stratum_starts: np.ndarray
+    row_repeats: Union[np.ndarray, None]
 
-    return _rep_iter_return_impl
 
+def permutation_plan(data: np.ndarray, col_to_permute: int) -> PermutationPlan:
+    """Analyze the target data for cluster-aware permutation.
 
-@lru_cache()
-def _random_return(col_to_permute: int, keys: Iterable) -> Callable:
-    """Transformer when exact is False and repetition is not required."""
+    Parameters
+    ----------
+    data : 2D numeric ndarray
+        Target data. Must be lexicographically sorted.
+    col_to_permute : int
+        Index of the column to be permuted.
 
+    Returns
+    -------
+    PermutationPlan
+    """
+    values, indexes, counts = np.unique(
+        data[:, : col_to_permute + 2], return_index=True, return_counts=True, axis=0
+    )
     if col_to_permute == 0:
-
-        @jit(nopython=True)
-        def _random_return_impl(data):
-            nb_fast_shuffle(data[:, col_to_permute])
-            return data
-
+        stratum_starts = np.array([0, len(values)])
     else:
+        ids = np.unique(values[:, :-2], axis=0, return_inverse=True)[1].ravel()
+        changes = np.flatnonzero(ids[1:] != ids[:-1]) + 1
+        stratum_starts = np.concatenate(([0], changes, [len(values)]))
+    unit_values = values[:, -2].copy()
+    row_repeats = None if indexes.size == len(data) else counts
+    return PermutationPlan(col_to_permute, unit_values, stratum_starts, row_repeats)
 
-        @jit(nopython=True)
-        def _random_return_impl(data):
-            nb_strat_shuffle(data[:, col_to_permute], keys)
-            return data
 
-    return _random_return_impl
+def draw_permuted_labels(
+    plan: PermutationPlan, rng: np.random.Generator, size: int
+) -> np.ndarray:
+    """Draw a batch of cluster-aware permutations of the target column.
+
+    Each output row is one independent uniform (stratified) permutation of
+    the unit labels, expanded to data rows if units span multiple rows.
+
+    Parameters
+    ----------
+    plan : PermutationPlan
+    rng : numpy.random.Generator
+        Source of randomness; advanced by this call.
+    size : int
+        Number of permutations to draw.
+
+    Returns
+    -------
+    2D array of shape (size, number of data rows)
+    """
+    labels = np.tile(plan.unit_values, (size, 1))
+    for start, stop in zip(plan.stratum_starts[:-1], plan.stratum_starts[1:]):
+        if stop - start > 1:
+            block = labels[:, start:stop]
+            rng.permuted(block, axis=1, out=block)
+    if plan.row_repeats is not None:
+        labels = np.repeat(labels, plan.row_repeats, axis=1)
+    return labels
 
 
-@lru_cache()
-def _random_repeat_return(
-    col_to_permute: int, col_values: Iterable, keys: Iterable, counts: Iterable
-) -> Callable:
-    """Transformer when exact is False and repetition is required."""
-    col_values = np.array(col_values)
-    counts = np.array(counts)
-    if col_to_permute == 0:
+def exact_label_matrix(data: np.ndarray, col_to_permute: int) -> np.ndarray:
+    """Enumerate every distinct permutation of the target column's unit
+    labels, in multiset-permutation order, expanded to data rows.
 
-        @jit(nopython=True)
-        def _random_repeat_return_impl(data):
-            shuffled_col_values = col_values.copy()
-            nb_fast_shuffle(shuffled_col_values)
-            data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
-            return data
+    Parameters
+    ----------
+    data : 2D numeric ndarray
+        Target data. Must be lexicographically sorted.
+    col_to_permute : int
+        Index of the column to be permuted. Must be 0.
 
-    else:
-
-        @jit(nopython=True)
-        def _random_repeat_return_impl(data):
-            shuffled_col_values = col_values.copy()
-            nb_strat_shuffle(shuffled_col_values, keys)
-            data[:, col_to_permute] = np.repeat(shuffled_col_values, counts)
-            return data
-
-    return _random_repeat_return_impl
+    Returns
+    -------
+    2D array of shape (number of distinct permutations, number of data rows)
+    """
+    values, counts = np.unique(
+        data[:, : col_to_permute + 2], return_counts=True, axis=0
+    )
+    col_values = values[:, -2].tolist()
+    labels = np.array(list(msp(col_values)))
+    if len(col_values) != len(data):
+        labels = np.repeat(labels, counts, axis=1)
+    return labels

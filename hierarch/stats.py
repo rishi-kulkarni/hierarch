@@ -6,13 +6,19 @@ from warnings import simplefilter, warn
 
 import numpy as np
 import pandas as pd
-from numba import jit
 
 from hierarch.internal_functions import (
     GroupbyMean,
     bivar_central_moment,
 )
-from hierarch.resampling import Bootstrapper, Permuter
+from hierarch.resampling import (
+    Bootstrapper,
+    Permuter,
+    draw_bootstrap_weights_batch,
+    draw_permuted_labels,
+    exact_label_matrix,
+    permutation_plan,
+)
 
 
 def _preprocess_data(data):
@@ -58,7 +64,6 @@ def _preprocess_data(data):
     return encoded
 
 
-@jit(nopython=True, cache=True)
 def studentized_covariance(x, y):
     """Studentized sample covariance between two variables.
 
@@ -126,10 +131,9 @@ def studentized_covariance(x, y):
     denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
 
     t = (numerator) / ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
-    return t
+    return float(t)
 
 
-@jit(nopython=True, cache=True)
 def jackknife_studentized_covariance(x, y):
     """Studentized sample covariance using jackknife variance estimate.
 
@@ -146,28 +150,15 @@ def jackknife_studentized_covariance(x, y):
     float64
         Jackknife studentized covariance.
     """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
     n = len(x)
-
-    mean_x = 0.0
-    mean_y = 0.0
-    for i in range(n):
-        mean_x += x[i]
-        mean_y += y[i]
-    mean_x /= n
-    mean_y /= n
-
-    S1 = 0.0
-    S2 = 0.0
-    for i in range(n):
-        ab = (x[i] - mean_x) * (y[i] - mean_y)
-        S1 += ab
-        S2 += ab * ab
-
-    t = S1 * (n - 2) / ((n - 1) * (n * S2 - S1 * S1)) ** 0.5
-    return t
+    ab = (x - x.mean()) * (y - y.mean())
+    S1 = ab.sum()
+    S2 = (ab * ab).sum()
+    return float(S1 * (n - 2) / ((n - 1) * (n * S2 - S1 * S1)) ** 0.5)
 
 
-@jit(nopython=True, cache=True)
 def welch_statistic(sample_a, sample_b):
     """Calculates Welch's t statistic.
 
@@ -228,57 +219,118 @@ def welch_statistic(sample_a, sample_b):
     # compute t statistic
     t = meandiff / np.sqrt(var_weight_one + var_weight_two)
 
-    return t
+    return float(t)
+
+
+def _wrap_custom_statistic(func):
+    """Wrap a user-supplied test statistic with shape normalization and a
+    loud contract check.
+
+    Custom statistics receive a 2D array of permuted treatment columns with
+    shape (permutations, n) and a row-aligned 2D array of dependent values
+    with the same shape, and must return one statistic per row. A callable
+    written for single columns is detected by its output shape and rejected
+    with a migration hint rather than silently miscounted.
+    """
+
+    def batched(labels, y):
+        y = np.asarray(y)
+        if y.ndim == 1:
+            y = np.broadcast_to(y, labels.shape)
+        output = np.asarray(func(labels, y))
+        if output.shape != (labels.shape[0],):
+            raise TypeError(
+                "Custom test statistics receive a (permutations, n) array of "
+                "permuted treatment values and a matching array of dependent "
+                "values, and must return one statistic per permutation (got "
+                f"output shape {output.shape} for {labels.shape[0]} "
+                "permutations). Vectorize over the last axis, or apply a "
+                "single-column statistic row by row: "
+                "np.array([f(x, y) for x, y in zip(treatments, values)])"
+            )
+        return output
+
+    return batched
 
 
 @lru_cache()
-def _test_stat_factory(treatment_col, compare):
-    """Prepares test statistic functions for use in hypothesis_test.
+def _batched_stat_factory(treatment_col, compare):
+    """Vectorized counterparts of the built-in test statistics.
+
+    Returns a function mapping a (permutations, n) matrix of permuted
+    treatment columns and an n-vector of dependent values to a vector of
+    test statistics, one per permutation. Each statistic reduces to one or
+    two matrix-vector products because every permutation shares the same
+    multiset of treatment values.
 
     Parameters
     ----------
     treatment_col : 1D tuple
-        Treatment column in the design matrix. Needs to be a tuple
-        so lru_cache can work.
+        Treatment column in the design matrix, as a tuple for lru_cache.
     compare : {'means', 'corr', 'jackknife_corr'}
-        Specifies test statistic to return.
-
-    Returns
-    -------
-    function
-        Functions that come out of _test_stat_factory take the treatment
-        column of a design matrix and the dependent variable column to compute
-        a test statistic.
-
     """
     if compare == "means":
         treatment_labels = np.unique(treatment_col)
         if treatment_labels.size != 2:
             raise ValueError("Needs 2 samples.")
+        label_a = treatment_labels[0]
 
-        @jit(nopython=True)
-        def _welch_stat(X, y):
-            sample_a, sample_b = _grabber(X, y, treatment_labels)
-            return welch_statistic(sample_a, sample_b)
+        def _welch_batch(labels, y):
+            n = labels.shape[-1]
+            group_a = (labels == label_a).astype(np.float64)
+            n_a = float((labels.reshape(-1, n)[0] == label_a).sum())
+            n_b = n - n_a
+            y_sq = y * y
+            sum_a = (group_a * y).sum(axis=-1)
+            sum_a_sq = (group_a * y_sq).sum(axis=-1)
+            sum_b = y.sum(axis=-1) - sum_a
+            sum_b_sq = y_sq.sum(axis=-1) - sum_a_sq
+            mean_diff = sum_a / n_a - sum_b / n_b
+            var_a = (sum_a_sq - sum_a**2 / n_a) / (n_a - 1)
+            var_b = (sum_b_sq - sum_b**2 / n_b) / (n_b - 1)
+            return mean_diff / np.sqrt(var_a / n_a + var_b / n_b)
 
-        return _welch_stat
+        return _welch_batch
 
     elif compare == "corr":
-        return studentized_covariance
+
+        def _corr_batch(labels, y):
+            n = labels.shape[-1]
+            # constants come from the sorted multiset so every batch (and the
+            # single-row observed-statistic call) computes them bit-identically
+            x_sorted = np.sort(labels.reshape(-1, n)[0])
+            x_mean = x_sorted.mean()
+            x_c_sorted = x_sorted - x_mean
+            y_c = y - y.mean(axis=-1, keepdims=True)
+            prod = (labels - x_mean) * y_c
+            s1 = prod.sum(axis=-1)
+            prod *= prod
+            s2 = prod.sum(axis=-1)
+            var_x = (x_c_sorted * x_c_sorted).sum() / (n - 1)
+            var_y = (y_c * y_c).sum(axis=-1) / (n - 1)
+            numerator = s1 / (n - 1)
+            denom_1 = s2 / (n - 2**0.5)
+            denom_2 = var_x * var_y / (n - 1)
+            denom_3 = (n - 2) * (s1 / (n - 1.75)) ** 2 / (n - 1)
+            return numerator / ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
+
+        return _corr_batch
 
     elif compare == "jackknife_corr":
-        return jackknife_studentized_covariance
+
+        def _jackknife_batch(labels, y):
+            n = labels.shape[-1]
+            y_c = y - y.mean(axis=-1, keepdims=True)
+            prod = (labels - np.sort(labels.reshape(-1, n)[0]).mean()) * y_c
+            s1 = prod.sum(axis=-1)
+            prod *= prod
+            s2 = prod.sum(axis=-1)
+            return s1 * (n - 2) / ((n - 1) * (n * s2 - s1 * s1)) ** 0.5
+
+        return _jackknife_batch
 
     else:
         raise KeyError("No such comparison.")
-
-
-@jit(nopython=True)
-def _grabber(X, y, treatment_labels):
-    slicer = X == treatment_labels[0]
-    sample_a = y[slicer]
-    sample_b = y[~slicer]
-    return sample_a, sample_b
 
 
 def hypothesis_test(
@@ -312,6 +364,12 @@ def hypothesis_test(
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
         "jackknife_corr" uses the jackknife studentized covariance test statistic.
+        A callable receives a (permutations, n) array of permuted treatment
+        columns and a row-aligned array of dependent values of the same
+        shape, and must return one statistic per permutation (reduce over
+        ``axis=-1``); it then runs at the speed of the built-in statistics.
+        A single-column statistic can be applied row by row inside the
+        callable: ``np.array([f(x, y) for x, y in zip(treatments, values)])``.
     alternative : {"two-sided", "less", "greater"}
         The alternative hypothesis for the test, "two-sided" by default.
     skip : list of ints, optional
@@ -392,7 +450,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00682
+    0.0069
 
 
     """
@@ -431,12 +489,15 @@ def hypothesis_test(
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip=skip)
 
-    # fetch test statistic from dictionary or, if given a custom test
-    # statistic, make sure it is callable
+    # fetch a vectorized test statistic from the built-in dictionary or, if
+    # given a custom statistic, make sure it is callable and wrap it with
+    # shape validation
     if isinstance(compare, str):
-        teststat = _test_stat_factory(tuple(data[:, treatment_col].tolist()), compare)
+        batched_stat = _batched_stat_factory(
+            tuple(data[:, treatment_col].tolist()), compare
+        )
     elif callable(compare):
-        teststat = compare
+        batched_stat = _wrap_custom_statistic(compare)
     else:
         raise AttributeError("Custom test statistics must be callable.")
 
@@ -457,66 +518,69 @@ def hypothesis_test(
 
     test = data
     test = aggregator.transform(test, iterations=levels_to_agg)
-    truediff = teststat(test[:, treatment_col], test[:, -1])
 
-    # initialize and fit the permuter to the aggregated data; the permuter
-    # shuffles via numba's global PRNG, which it seeds from our generator
-    permuter = Permuter(random_state=rng)
-
+    # prepare the permuted treatment columns; if the test statistic is one of
+    # the built-in comparisons, a whole batch of permutations is scored at
+    # once with the vectorized implementations below
     if permutations == "all":
-        permuter.fit(test, treatment_col, exact=True)
-
-        # in the exact case, determine and set the total number of
-        # possible permutations
+        # every distinct labeling, in multiset-permutation order; the total
+        # number of permutations is C(n, n_0), and each bootstrap consumes
+        # the next `permutations` rows of the (cycled) enumeration
+        exact_labels = exact_label_matrix(test, treatment_col)
         counts = np.unique(test[:, 0], return_counts=True)[1]
         permutations = _binomial(counts.sum(), counts[0])
-
+        perm_plan = None
     else:
-        # just fit the permuter if this is a randomized test
-        permuter.fit(test, treatment_col)
+        exact_labels = None
+        perm_plan = permutation_plan(test, treatment_col)
 
-    # skip the dot on the permute function
-    call_permute = permuter.transform
+    # the observed statistic is computed with the same (batched) arithmetic
+    # as the null distribution: permutations that reproduce the observed
+    # labeling then yield bit-identical statistics, so ties are counted as
+    # extreme on both tails no matter how y has been transformed
+    truediff = batched_stat(test[:, treatment_col][None, :], test[:, -1])[0]
 
-    # initialize empty null distribution list
-    null_distribution = []
     total = bootstraps * permutations
 
-    # first set of permutations is on the original data
-    # this helps to prevent getting a p-value of 0
-    for k in range(permutations):
-        permute_resample = call_permute(test)
-        null_distribution.append(
-            teststat(permute_resample[:, treatment_col], permute_resample[:, -1])
+    # fully batched: all bootstrap weight sets, aggregations, permutations,
+    # and statistics are drawn and scored in single vectorized passes. The
+    # first y row is the original (unbootstrapped) aggregated data, which
+    # prevents getting a p-value of 0. Index resamples are aggregated through
+    # their weight representation, which is exactly how the sequential
+    # resampled path computes them.
+    y_matrix = np.empty((bootstraps, test.shape[0]))
+    y_matrix[0] = test[:, -1]
+    if bootstraps > 1:
+        weights = draw_bootstrap_weights_batch(
+            bootstrapper._plan, rng, treatment_col + 2, kind, bootstraps - 1
         )
-
-    # already did one set of permutations
-    bootstraps -= 1
-
-    for j in range(bootstraps):
-        # generate a bootstrapped sample and aggregate it up to the
-        # treated level
-        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
-        bootstrapped_sample = aggregator.transform(
-            bootstrapped_sample, iterations=levels_to_agg, resampled=(kind == "indexes")
+        y_matrix[1:] = aggregator.transform_batch(
+            weights * data[:, -1], iterations=levels_to_agg
         )
-
-        # generate permuted samples, calculate test statistic,
-        # append to null distribution
-
-        for k in range(permutations):
-            permute_resample = call_permute(bootstrapped_sample)
-            null_distribution.append(
-                teststat(permute_resample[:, treatment_col], permute_resample[:, -1])
-            )
+    if exact_labels is None:
+        labels = draw_permuted_labels(perm_plan, rng, total)
+    else:
+        rows = (
+            np.arange(bootstraps)[:, None] * permutations
+            + np.arange(permutations)[None, :]
+        ) % len(exact_labels)
+        labels = exact_labels[rows.reshape(-1)]
+    # score in cache-sized chunks: giant temporaries are slower than medium
+    # ones, so group bootstraps such that each scoring block stays around a
+    # few hundred KB
+    null_distribution = np.empty(total)
+    group = max(1, 16384 // permutations + 1)
+    for c0 in range(0, bootstraps, group):
+        c1 = min(bootstraps, c0 + group)
+        block = labels[c0 * permutations : c1 * permutations]
+        y_block = np.repeat(y_matrix[c0:c1], permutations, axis=0)
+        null_distribution[c0 * permutations : c1 * permutations] = batched_stat(
+            block, y_block
+        )
 
     # generate both one-tailed p-values, then two-tailed
-    p_less = np.where(truediff >= np.array(null_distribution))[0].size / len(
-        null_distribution
-    )
-    p_greater = np.where(truediff <= np.array(null_distribution))[0].size / len(
-        null_distribution
-    )
+    p_less = np.count_nonzero(truediff >= null_distribution) / len(null_distribution)
+    p_greater = np.count_nonzero(truediff <= null_distribution) / len(null_distribution)
     p_two = 2 * np.min((p_less, p_greater))
 
     if alternative == "two-sided":
@@ -530,7 +594,7 @@ def hypothesis_test(
         pval += 1 / (total)
 
     if return_null is True:
-        return float(pval), null_distribution
+        return float(pval), null_distribution.tolist()
 
     else:
         return float(pval)
@@ -665,12 +729,12 @@ def multi_sample_test(
     ...                   correction=None, bootstraps=1000,
     ...                   permutations="all", random_state=111)
       Condition 1 Condition 2 p-value
-    0         2.0         3.0  0.0372
-    1         3.0         4.0  0.0388
+    0         3.0         4.0   0.035
+    1         2.0         3.0  0.0353
     2         1.0         3.0  0.0414
-    3         2.0         4.0  0.1524
-    4         1.0         2.0  0.4031
-    5         1.0         4.0  0.4541
+    3         2.0         4.0  0.1504
+    4         1.0         2.0  0.4029
+    5         1.0         4.0  0.4519
 
     Multiple comparison correction to control False Discovery Rate is advisable in
     this situation. The final column now shows the q-values, or "adjusted" p-values
@@ -680,12 +744,12 @@ def multi_sample_test(
     ...                   correction='fdr', bootstraps=1000,
     ...                   permutations="all", random_state=111)
       Condition 1 Condition 2 p-value Corrected p-value
-    0         2.0         3.0  0.0372            0.0828
-    1         3.0         4.0  0.0388            0.0828
+    0         3.0         4.0   0.035            0.0828
+    1         2.0         3.0  0.0353            0.0828
     2         1.0         3.0  0.0414            0.0828
-    3         2.0         4.0  0.1524            0.2286
-    4         1.0         2.0  0.4031            0.4541
-    5         1.0         4.0  0.4541            0.4541
+    3         2.0         4.0  0.1504            0.2256
+    4         1.0         2.0  0.4029            0.4519
+    5         1.0         4.0  0.4519            0.4519
 
     Perhaps the experimenter is not interested in every pairwise comparison - perhaps
     condition 2 is a control that all other conditions are meant to be compared to.
@@ -697,7 +761,7 @@ def multi_sample_test(
     ...                   permutations="all", random_state=222)
       Condition 1 Condition 2 p-value Corrected p-value
     0         2.0         3.0   0.035             0.105
-    1         2.0         4.0  0.1489           0.22335
+    1         2.0         4.0  0.1521           0.22815
     2         2.0         1.0  0.4066            0.4066
 
 
@@ -983,7 +1047,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (1.3366519777351944, 6.102813775056613)
+    (1.3391058235442719, 6.1003599292475315)
 
     The true difference is 2, which falls within the interval. We can examine
     the p-value for the corresponding dataset:
@@ -999,7 +1063,7 @@ def confidence_interval(
 
     >>> confidence_interval(data, treatment_col=0, interval=99.5,
     ...    bootstraps=1000, permutations='all', random_state=1)
-    (-0.14605181054507144, 7.5855175633368885)
+    (-0.15334319814774933, 7.59280895093957)
 
     A permutation t-test can be used to generate the null distribution by
     specifying compare = "means". This should return the same or a very
@@ -1008,7 +1072,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...    compare='means', bootstraps=1000,
     ...    permutations='all', random_state=1)
-    (1.3366519777351944, 6.102813775056613)
+    (1.3391058235442719, 6.1003599292475315)
 
     Setting compare = "corr" will generate a confidence interval for the slope
     in a regression equation.
@@ -1022,7 +1086,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.833378139209199, 1.6194618200006743)
+    (0.83297255712053, 1.6195336227023118)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -1177,7 +1241,6 @@ class ConvergenceWarning(Warning):
         return repr(self.message)
 
 
-@jit(nopython=True, cache=True)
 def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     """Unpivots a test statistic to a slope.
 
@@ -1207,12 +1270,12 @@ def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     >>> data = datagen.generate()
     >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
     >>> _compute_interval(null, data, 0, 0.025, _cov_std_error)
-    -1.6152850229879505
+    -1.6154082371193477
 
     The test statistic distribution is essentially symmetric about 0.
 
     >>> _compute_interval(null, data, 0, 0.975, _cov_std_error)
-    1.6159133301327298
+    1.5948320549412573
 
     """
     x = null_data[:, treatment_col]
@@ -1221,10 +1284,9 @@ def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     denom = std_error_fn(x, y)
     bound = np.quantile(null, quantile) * denom / bivar_central_moment(x, x)
 
-    return bound
+    return float(bound)
 
 
-@jit(nopython=True, cache=True)
 def _cov_std_error(x, y):
     """Computes an estimate of the standard error of the covariance between
     two variables.
@@ -1272,10 +1334,9 @@ def _cov_std_error(x, y):
     # third term is the square of the covariance of x and y. an approximate bias
     # correction of n - root(3) is applied
     denom_3 = ((n - 2) * (bivar_central_moment(x, y, pow=1, ddof=1.75) ** 2)) / (n - 1)
-    return ((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5
+    return float(((1 / (n - 1.5)) * (denom_1 + denom_2 - denom_3)) ** 0.5)
 
 
-@jit(nopython=True, cache=True)
 def _jackknife_cov_std_error(x, y):
     """Computes the jackknife standard error of the covariance between
     two variables.
@@ -1293,23 +1354,13 @@ def _jackknife_cov_std_error(x, y):
     float
 
     """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
     n = len(x)
-    mean_x = 0.0
-    mean_y = 0.0
-    for i in range(n):
-        mean_x += x[i]
-        mean_y += y[i]
-    mean_x /= n
-    mean_y /= n
-
-    S1 = 0.0
-    S2 = 0.0
-    for i in range(n):
-        ab = (x[i] - mean_x) * (y[i] - mean_y)
-        S1 += ab
-        S2 += ab * ab
-
-    return ((n - 1) * (n * S2 - S1 * S1)) ** 0.5 / ((n - 1) * (n - 2))
+    ab = (x - x.mean()) * (y - y.mean())
+    S1 = ab.sum()
+    S2 = (ab * ab).sum()
+    return float(((n - 1) * (n * S2 - S1 * S1)) ** 0.5 / ((n - 1) * (n - 2)))
 
 
 def hierarchical_randomization(
@@ -1390,8 +1441,7 @@ def hierarchical_randomization(
         # get a bootstrap sample
         bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
 
-        # initialize and fit the permuter to the aggregated data; the permuter
-        # shuffles via numba's global PRNG, which it seeds from our generator
+        # initialize and fit the permuter to the aggregated data
         permuter = Permuter(random_state=rng)
 
         if permutations == "all":

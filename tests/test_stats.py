@@ -86,7 +86,9 @@ class TestJackknifeStudentizedCovariance(unittest.TestCase):
 
             # naive
             cov_full = np.cov(x, y)[0, 1]
-            loo = np.array([np.cov(np.delete(x, i), np.delete(y, i))[0, 1] for i in range(n)])
+            loo = np.array(
+                [np.cov(np.delete(x, i), np.delete(y, i))[0, 1] for i in range(n)]
+            )
             var_jack = ((n - 1) / n) * np.sum((loo - loo.mean()) ** 2)
             naive_t = cov_full / np.sqrt(var_jack)
 
@@ -263,12 +265,18 @@ class TestConfidenceInterval(unittest.TestCase):
 
     def test_jackknife_corr_conf(self):
         interval_95 = hierarch.stats.confidence_interval(
-            self.data, 0, interval=95, compare="jackknife_corr",
+            self.data,
+            0,
+            interval=95,
+            compare="jackknife_corr",
         )
         self.assertEqual(len(interval_95), 2)
 
         interval_68 = hierarch.stats.confidence_interval(
-            self.data, 0, interval=68, compare="jackknife_corr",
+            self.data,
+            0,
+            interval=68,
+            compare="jackknife_corr",
         )
         self.assertLess(interval_95[0], interval_68[0])
         self.assertGreater(interval_95[1], interval_68[1])
@@ -279,10 +287,12 @@ class TestJackknifeStdError(unittest.TestCase):
         x = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=np.float64)
         y = np.array([1, 2, 3, 4, 5, 2, 3, 4, 5, 6], dtype=np.float64)
         n = len(x)
-        leave_one_out = np.array([
-            np.cov(np.delete(x, i), np.delete(y, i))[0, 1] for i in range(n)
-        ])
-        naive_se = np.sqrt(((n - 1) / n) * np.sum((leave_one_out - leave_one_out.mean()) ** 2))
+        leave_one_out = np.array(
+            [np.cov(np.delete(x, i), np.delete(y, i))[0, 1] for i in range(n)]
+        )
+        naive_se = np.sqrt(
+            ((n - 1) / n) * np.sum((leave_one_out - leave_one_out.mean()) ** 2)
+        )
         self.assertAlmostEqual(hierarch.stats._jackknife_cov_std_error(x, y), naive_se)
 
 

@@ -232,7 +232,9 @@ def exact_permutation_pvalue(x, y, statistic, alternative="two-sided", strata=No
         else n_distinct_stratified_permutations(x, strata)
     )
     if size > BRUTE_FORCE_LIMIT:
-        raise ValueError(f"brute force would enumerate {size} permutations; shrink the design")
+        raise ValueError(
+            f"brute force would enumerate {size} permutations; shrink the design"
+        )
     observed = statistic(x, y)
     perms = (
         distinct_permutations(x)

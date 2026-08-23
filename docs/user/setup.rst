@@ -6,7 +6,6 @@ Dependencies
 
 * numpy
 * pandas (for importing data)
-* numba
 * scipy (for power analysis)
 
 Installation
