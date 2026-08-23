@@ -222,91 +222,35 @@ def welch_statistic(sample_a, sample_b):
     return float(t)
 
 
-def vectorized_statistic(func):
-    """Mark a custom test statistic as vectorized so hypothesis_test can
-    score whole batches of permutations with it at once.
+def _wrap_custom_statistic(func):
+    """Wrap a user-supplied test statistic with shape normalization and a
+    loud contract check.
 
-    A vectorized statistic receives a 2D array of permuted treatment columns
-    with shape (permutations, n) and a row-aligned 2D array of dependent
-    values with the same shape, and must return a 1D array of length
-    ``permutations`` -- one test statistic per row. Reductions should use
-    ``axis=-1``. The observed statistic is computed by the same function on a
-    single-row batch, so implementations should be deterministic per row.
-
-    Parameters
-    ----------
-    func : callable
-        Function of (treatment_columns, dependent_values) as described above.
-
-    Returns
-    -------
-    callable
-        The same function, marked for the batched path.
-
-    Examples
-    --------
-    >>> @vectorized_statistic
-    ... def pearson_r(x, y):
-    ...     xc = x - x.mean(axis=-1, keepdims=True)
-    ...     yc = y - y.mean(axis=-1, keepdims=True)
-    ...     num = (xc * yc).sum(axis=-1)
-    ...     denom = np.sqrt((xc * xc).sum(axis=-1) * (yc * yc).sum(axis=-1))
-    ...     return num / denom
-
-    ``pearson_r`` can now be passed as the ``compare`` argument of
-    hypothesis_test and runs at the speed of the built-in statistics
-    rather than being called once per permutation.
+    Custom statistics receive a 2D array of permuted treatment columns with
+    shape (permutations, n) and a row-aligned 2D array of dependent values
+    with the same shape, and must return one statistic per row. A callable
+    written for single columns is detected by its output shape and rejected
+    with a migration hint rather than silently miscounted.
     """
-    func.is_vectorized = True
-    return func
 
+    def batched(labels, y):
+        y = np.asarray(y)
+        if y.ndim == 1:
+            y = np.broadcast_to(y, labels.shape)
+        output = np.asarray(func(labels, y))
+        if output.shape != (labels.shape[0],):
+            raise TypeError(
+                "Custom test statistics receive a (permutations, n) array of "
+                "permuted treatment values and a matching array of dependent "
+                "values, and must return one statistic per permutation (got "
+                f"output shape {output.shape} for {labels.shape[0]} "
+                "permutations). Vectorize over the last axis, or apply a "
+                "single-column statistic row by row: "
+                "np.array([f(x, y) for x, y in zip(treatments, values)])"
+            )
+        return output
 
-@lru_cache()
-def _test_stat_factory(treatment_col, compare):
-    """Prepares test statistic functions for use in hypothesis_test.
-
-    Parameters
-    ----------
-    treatment_col : 1D tuple
-        Treatment column in the design matrix. Needs to be a tuple
-        so lru_cache can work.
-    compare : {'means', 'corr', 'jackknife_corr'}
-        Specifies test statistic to return.
-
-    Returns
-    -------
-    function
-        Functions that come out of _test_stat_factory take the treatment
-        column of a design matrix and the dependent variable column to compute
-        a test statistic.
-
-    """
-    if compare == "means":
-        treatment_labels = np.unique(treatment_col)
-        if treatment_labels.size != 2:
-            raise ValueError("Needs 2 samples.")
-
-        def _welch_stat(X, y):
-            sample_a, sample_b = _grabber(X, y, treatment_labels)
-            return welch_statistic(sample_a, sample_b)
-
-        return _welch_stat
-
-    elif compare == "corr":
-        return studentized_covariance
-
-    elif compare == "jackknife_corr":
-        return jackknife_studentized_covariance
-
-    else:
-        raise KeyError("No such comparison.")
-
-
-def _grabber(X, y, treatment_labels):
-    slicer = X == treatment_labels[0]
-    sample_a = y[slicer]
-    sample_b = y[~slicer]
-    return sample_a, sample_b
+    return batched
 
 
 @lru_cache()
@@ -420,10 +364,12 @@ def hypothesis_test(
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
         "jackknife_corr" uses the jackknife studentized covariance test statistic.
-        A callable is called once per permutation with the permuted treatment
-        column and the dependent values; a callable marked with
-        :func:`vectorized_statistic` scores whole batches of permutations at
-        once and runs at the speed of the built-in statistics.
+        A callable receives a (permutations, n) array of permuted treatment
+        columns and a row-aligned array of dependent values of the same
+        shape, and must return one statistic per permutation (reduce over
+        ``axis=-1``); it then runs at the speed of the built-in statistics.
+        A single-column statistic can be applied row by row inside the
+        callable: ``np.array([f(x, y) for x, y in zip(treatments, values)])``.
     alternative : {"two-sided", "less", "greater"}
         The alternative hypothesis for the test, "two-sided" by default.
     skip : list of ints, optional
@@ -543,12 +489,15 @@ def hypothesis_test(
     bootstrapper = Bootstrapper(random_state=rng, kind=kind)
     bootstrapper.fit(data, skip=skip)
 
-    # fetch test statistic from dictionary or, if given a custom test
-    # statistic, make sure it is callable
+    # fetch a vectorized test statistic from the built-in dictionary or, if
+    # given a custom statistic, make sure it is callable and wrap it with
+    # shape validation
     if isinstance(compare, str):
-        teststat = _test_stat_factory(tuple(data[:, treatment_col].tolist()), compare)
+        batched_stat = _batched_stat_factory(
+            tuple(data[:, treatment_col].tolist()), compare
+        )
     elif callable(compare):
-        teststat = compare
+        batched_stat = _wrap_custom_statistic(compare)
     else:
         raise AttributeError("Custom test statistics must be callable.")
 
@@ -580,109 +529,54 @@ def hypothesis_test(
         exact_labels = exact_label_matrix(test, treatment_col)
         counts = np.unique(test[:, 0], return_counts=True)[1]
         permutations = _binomial(counts.sum(), counts[0])
-        cycle_position = 0
         perm_plan = None
     else:
         exact_labels = None
         perm_plan = permutation_plan(test, treatment_col)
 
-    batched_stat = None
-    if isinstance(compare, str):
-        batched_stat = _batched_stat_factory(
-            tuple(data[:, treatment_col].tolist()), compare
-        )
-    elif getattr(compare, "is_vectorized", False):
-        # a user statistic marked with @vectorized_statistic scores whole
-        # batches; normalize y to a row-aligned 2D array so the user contract
-        # is always (permutations, n) against (permutations, n)
-        def batched_stat(labels, y, _func=compare):
-            y = np.asarray(y)
-            if y.ndim == 1:
-                y = np.broadcast_to(y, labels.shape)
-            return np.asarray(_func(labels, y))
-
     # the observed statistic is computed with the same (batched) arithmetic
     # as the null distribution: permutations that reproduce the observed
     # labeling then yield bit-identical statistics, so ties are counted as
     # extreme on both tails no matter how y has been transformed
-    if batched_stat is not None:
-        truediff = batched_stat(test[:, treatment_col][None, :], test[:, -1])[0]
-    else:
-        truediff = teststat(test[:, treatment_col], test[:, -1])
-
-    def _draw_labels():
-        nonlocal cycle_position
-        if exact_labels is None:
-            return draw_permuted_labels(perm_plan, rng, permutations)
-        rows = (cycle_position + np.arange(permutations)) % len(exact_labels)
-        cycle_position = (cycle_position + permutations) % len(exact_labels)
-        return exact_labels[rows]
-
-    def _score(labels, y):
-        if batched_stat is not None:
-            return batched_stat(labels, y)
-        return np.array([teststat(row, y) for row in labels])
+    truediff = batched_stat(test[:, treatment_col][None, :], test[:, -1])[0]
 
     total = bootstraps * permutations
 
-    if batched_stat is not None:
-        # fully batched path: all bootstrap weight sets, aggregations,
-        # permutations, and statistics are drawn and scored in single
-        # vectorized passes. The first y row is the original (unbootstrapped)
-        # aggregated data, which prevents getting a p-value of 0. Index
-        # resamples are aggregated through their weight representation, which
-        # is exactly how the sequential resampled path computes them.
-        y_matrix = np.empty((bootstraps, test.shape[0]))
-        y_matrix[0] = test[:, -1]
-        if bootstraps > 1:
-            weights = draw_bootstrap_weights_batch(
-                bootstrapper._plan, rng, treatment_col + 2, kind, bootstraps - 1
-            )
-            y_matrix[1:] = aggregator.transform_batch(
-                weights * data[:, -1], iterations=levels_to_agg
-            )
-        if exact_labels is None:
-            labels = draw_permuted_labels(perm_plan, rng, total)
-        else:
-            rows = (
-                np.arange(bootstraps)[:, None] * permutations
-                + np.arange(permutations)[None, :]
-            ) % len(exact_labels)
-            labels = exact_labels[rows.reshape(-1)]
-        # score in cache-sized chunks: giant temporaries are slower than
-        # medium ones, so group bootstraps such that each scoring block stays
-        # around a few hundred KB
-        null_distribution = np.empty(total)
-        group = max(1, 16384 // permutations + 1)
-        for c0 in range(0, bootstraps, group):
-            c1 = min(bootstraps, c0 + group)
-            block = labels[c0 * permutations : c1 * permutations]
-            y_block = np.repeat(y_matrix[c0:c1], permutations, axis=0)
-            null_distribution[c0 * permutations : c1 * permutations] = batched_stat(
-                block, y_block
-            )
+    # fully batched: all bootstrap weight sets, aggregations, permutations,
+    # and statistics are drawn and scored in single vectorized passes. The
+    # first y row is the original (unbootstrapped) aggregated data, which
+    # prevents getting a p-value of 0. Index resamples are aggregated through
+    # their weight representation, which is exactly how the sequential
+    # resampled path computes them.
+    y_matrix = np.empty((bootstraps, test.shape[0]))
+    y_matrix[0] = test[:, -1]
+    if bootstraps > 1:
+        weights = draw_bootstrap_weights_batch(
+            bootstrapper._plan, rng, treatment_col + 2, kind, bootstraps - 1
+        )
+        y_matrix[1:] = aggregator.transform_batch(
+            weights * data[:, -1], iterations=levels_to_agg
+        )
+    if exact_labels is None:
+        labels = draw_permuted_labels(perm_plan, rng, total)
     else:
-        # custom callable statistic: score permutations one at a time
-        null_blocks = []
-
-        # first set of permutations is on the original data
-        # this helps to prevent getting a p-value of 0
-        null_blocks.append(_score(_draw_labels(), test[:, -1]))
-
-        for j in range(bootstraps - 1):
-            # generate a bootstrapped sample and aggregate it up to the
-            # treated level
-            bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
-            bootstrapped_sample = aggregator.transform(
-                bootstrapped_sample,
-                iterations=levels_to_agg,
-                resampled=(kind == "indexes"),
-            )
-
-            # score a fresh batch of permutations against this sample
-            null_blocks.append(_score(_draw_labels(), bootstrapped_sample[:, -1]))
-
-        null_distribution = np.concatenate(null_blocks)
+        rows = (
+            np.arange(bootstraps)[:, None] * permutations
+            + np.arange(permutations)[None, :]
+        ) % len(exact_labels)
+        labels = exact_labels[rows.reshape(-1)]
+    # score in cache-sized chunks: giant temporaries are slower than medium
+    # ones, so group bootstraps such that each scoring block stays around a
+    # few hundred KB
+    null_distribution = np.empty(total)
+    group = max(1, 16384 // permutations + 1)
+    for c0 in range(0, bootstraps, group):
+        c1 = min(bootstraps, c0 + group)
+        block = labels[c0 * permutations : c1 * permutations]
+        y_block = np.repeat(y_matrix[c0:c1], permutations, axis=0)
+        null_distribution[c0 * permutations : c1 * permutations] = batched_stat(
+            block, y_block
+        )
 
     # generate both one-tailed p-values, then two-tailed
     p_less = np.count_nonzero(truediff >= null_distribution) / len(null_distribution)

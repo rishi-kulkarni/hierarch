@@ -113,43 +113,43 @@ class TestExactTestMatchesBruteForce:
             # MC standard error at 6000 permutations is < 0.0065
             assert abs(p_lib - p_ref) < 0.035, (hier, compare, p_lib, p_ref)
 
-    def test_vectorized_custom_statistic_matches_scalar(self, design_pool):
-        """A @vectorized_statistic callable takes the batched fast path and
-        must produce the same deterministic exact-test p-value as the
-        equivalent per-permutation callable."""
+    def test_custom_statistic_receives_batches(self, design_pool):
+        """A custom statistic receives (permutations, n) arrays and its
+        exact-test p-value matches the brute-force reference for the same
+        statistic."""
         hier, data = design_pool["3lvl_balanced_2x4x3"]
 
-        def stat(x, y):
+        def pearson_scalar(x, y):
             return np.corrcoef(x, y)[0, 1]
 
-        @hs.vectorized_statistic
-        def vstat(x, y):
+        def pearson_batched(x, y):
             xc = x - x.mean(axis=-1, keepdims=True)
             yc = y - y.mean(axis=-1, keepdims=True)
             num = (xc * yc).sum(axis=-1)
             denom = np.sqrt((xc * xc).sum(axis=-1) * (yc * yc).sum(axis=-1))
             return num / denom
 
-        p_scalar = hs.hypothesis_test(
-            data, 0, compare=stat, bootstraps=1, permutations="all"
-        )
-        p_vector = hs.hypothesis_test(
-            data, 0, compare=vstat, bootstraps=1, permutations="all"
-        )
-        assert p_scalar == pytest.approx(p_vector, abs=1e-12)
-
-    def test_custom_callable_statistic(self, design_pool):
-        hier, data = design_pool["3lvl_balanced_2x4x3"]
-
-        def stat(x, y):
-            return np.corrcoef(x, y)[0, 1]
-
         agg = aggregate_to_treatment_level(data, 0)
-        p_ref, _ = exact_permutation_pvalue(agg[:, 0], agg[:, -1], stat, "two-sided")
+        p_ref, _ = exact_permutation_pvalue(
+            agg[:, 0], agg[:, -1], pearson_scalar, "two-sided"
+        )
         p_lib = hs.hypothesis_test(
-            data, 0, compare=stat, bootstraps=1, permutations="all"
+            data, 0, compare=pearson_batched, bootstraps=1, permutations="all"
         )
         assert p_lib == pytest.approx(p_ref, abs=1e-12)
+
+    def test_single_column_statistic_raises_with_migration_hint(self, design_pool):
+        """A statistic written for single columns returns the wrong shape and
+        must fail loudly, not miscount."""
+        hier, data = design_pool["3lvl_balanced_2x4x3"]
+
+        def old_style(x, y):
+            return np.corrcoef(x, y)[0, 1]
+
+        with pytest.raises(TypeError, match="one statistic per permutation"):
+            hs.hypothesis_test(
+                data, 0, compare=old_style, bootstraps=1, permutations=100
+            )
 
     def test_no_levels_to_bootstrap_falls_back_to_pure_permutation(self):
         data = make_design([2, 3, 2], rng=3)
