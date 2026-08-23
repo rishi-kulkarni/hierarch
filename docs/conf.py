@@ -25,7 +25,7 @@ copyright = "2021, Rishi Kulkarni"
 author = "Rishi Kulkarni"
 
 # The full version, including alpha/beta/rc tags
-release = "0.3"
+release = "2.0.0"
 
 
 # -- General configuration ---------------------------------------------------
