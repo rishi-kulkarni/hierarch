@@ -113,6 +113,31 @@ class TestExactTestMatchesBruteForce:
             # MC standard error at 6000 permutations is < 0.0065
             assert abs(p_lib - p_ref) < 0.035, (hier, compare, p_lib, p_ref)
 
+    def test_vectorized_custom_statistic_matches_scalar(self, design_pool):
+        """A @vectorized_statistic callable takes the batched fast path and
+        must produce the same deterministic exact-test p-value as the
+        equivalent per-permutation callable."""
+        hier, data = design_pool["3lvl_balanced_2x4x3"]
+
+        def stat(x, y):
+            return np.corrcoef(x, y)[0, 1]
+
+        @hs.vectorized_statistic
+        def vstat(x, y):
+            xc = x - x.mean(axis=-1, keepdims=True)
+            yc = y - y.mean(axis=-1, keepdims=True)
+            num = (xc * yc).sum(axis=-1)
+            denom = np.sqrt((xc * xc).sum(axis=-1) * (yc * yc).sum(axis=-1))
+            return num / denom
+
+        p_scalar = hs.hypothesis_test(
+            data, 0, compare=stat, bootstraps=1, permutations="all"
+        )
+        p_vector = hs.hypothesis_test(
+            data, 0, compare=vstat, bootstraps=1, permutations="all"
+        )
+        assert p_scalar == pytest.approx(p_vector, abs=1e-12)
+
     def test_custom_callable_statistic(self, design_pool):
         hier, data = design_pool["3lvl_balanced_2x4x3"]
 

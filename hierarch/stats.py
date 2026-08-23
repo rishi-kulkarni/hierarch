@@ -222,6 +222,45 @@ def welch_statistic(sample_a, sample_b):
     return float(t)
 
 
+def vectorized_statistic(func):
+    """Mark a custom test statistic as vectorized so hypothesis_test can
+    score whole batches of permutations with it at once.
+
+    A vectorized statistic receives a 2D array of permuted treatment columns
+    with shape (permutations, n) and a row-aligned 2D array of dependent
+    values with the same shape, and must return a 1D array of length
+    ``permutations`` -- one test statistic per row. Reductions should use
+    ``axis=-1``. The observed statistic is computed by the same function on a
+    single-row batch, so implementations should be deterministic per row.
+
+    Parameters
+    ----------
+    func : callable
+        Function of (treatment_columns, dependent_values) as described above.
+
+    Returns
+    -------
+    callable
+        The same function, marked for the batched path.
+
+    Examples
+    --------
+    >>> @vectorized_statistic
+    ... def pearson_r(x, y):
+    ...     xc = x - x.mean(axis=-1, keepdims=True)
+    ...     yc = y - y.mean(axis=-1, keepdims=True)
+    ...     num = (xc * yc).sum(axis=-1)
+    ...     denom = np.sqrt((xc * xc).sum(axis=-1) * (yc * yc).sum(axis=-1))
+    ...     return num / denom
+
+    ``pearson_r`` can now be passed as the ``compare`` argument of
+    hypothesis_test and runs at the speed of the built-in statistics
+    rather than being called once per permutation.
+    """
+    func.is_vectorized = True
+    return func
+
+
 @lru_cache()
 def _test_stat_factory(treatment_col, compare):
     """Prepares test statistic functions for use in hypothesis_test.
@@ -381,6 +420,10 @@ def hypothesis_test(
         The test statistic to use to perform the hypothesis test, by default "corr"
         which automatically calls the studentized covariance test statistic.
         "jackknife_corr" uses the jackknife studentized covariance test statistic.
+        A callable is called once per permutation with the permuted treatment
+        column and the dependent values; a callable marked with
+        :func:`vectorized_statistic` scores whole batches of permutations at
+        once and runs at the speed of the built-in statistics.
     alternative : {"two-sided", "less", "greater"}
         The alternative hypothesis for the test, "two-sided" by default.
     skip : list of ints, optional
@@ -548,6 +591,15 @@ def hypothesis_test(
         batched_stat = _batched_stat_factory(
             tuple(data[:, treatment_col].tolist()), compare
         )
+    elif getattr(compare, "is_vectorized", False):
+        # a user statistic marked with @vectorized_statistic scores whole
+        # batches; normalize y to a row-aligned 2D array so the user contract
+        # is always (permutations, n) against (permutations, n)
+        def batched_stat(labels, y, _func=compare):
+            y = np.asarray(y)
+            if y.ndim == 1:
+                y = np.broadcast_to(y, labels.shape)
+            return np.asarray(_func(labels, y))
 
     # the observed statistic is computed with the same (batched) arithmetic
     # as the null distribution: permutations that reproduce the observed
