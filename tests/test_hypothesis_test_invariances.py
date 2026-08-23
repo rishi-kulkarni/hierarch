@@ -60,7 +60,10 @@ class TestPValueConventions:
         grouper.fit(encoded)
         agg = grouper.transform(encoded, iterations=encoded.shape[1] - 3)
         batched = hs._batched_stat_factory(tuple(encoded[:, 0].tolist()), "corr")
-        observed = batched(agg[:, 0][None, :], agg[:, -1])[0]
+        observed = batched(
+            np.ascontiguousarray(agg[:, 0])[None, :],
+            np.ascontiguousarray(agg[:, -1]),
+        )[0]
         for alternative in ALTERNATIVES:
             p, null = hs.hypothesis_test(
                 data,
