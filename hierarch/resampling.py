@@ -110,6 +110,64 @@ def draw_bootstrap_weights(
     return weights
 
 
+def draw_bootstrap_weights_batch(
+    plan: BootstrapPlan,
+    rng: np.random.Generator,
+    start: int,
+    kind: str,
+    size: int,
+) -> np.ndarray:
+    """Draw ``size`` independent sets of per-row bootstrap weights at once.
+
+    Equivalent to ``size`` calls of :func:`draw_bootstrap_weights` (with a
+    different stream consumption), but each resampling level is drawn for
+    every replicate in a single Generator call.
+
+    Parameters
+    ----------
+    plan : BootstrapPlan
+    rng : numpy.random.Generator
+        Source of randomness; advanced by this call.
+    start : int
+        First level to resample.
+    kind : { "weights", "indexes", "bayesian" }
+    size : int
+        Number of independent weight sets to draw.
+
+    Returns
+    -------
+    2D array of shape (size, number of rows)
+    """
+    if kind == "bayesian":
+        weights = np.ones((size, len(plan.children_per_level[start])))
+    else:
+        weights = np.ones((size, len(plan.children_per_level[start])), dtype=np.int64)
+    for level in range(start, len(plan.children_per_level)):
+        children = plan.children_per_level[level]
+        total = int(children.sum())
+        if not plan.resampled_levels[level]:
+            weights = np.repeat(weights, children, axis=1)
+        elif kind == "bayesian":
+            gammas = rng.standard_gamma(1.0, size=(size, total))
+            sums = np.add.reduceat(gammas, plan.block_starts_per_level[level], axis=1)
+            scale = weights * children
+            weights = (
+                gammas
+                / np.repeat(sums, children, axis=1)
+                * np.repeat(scale, children, axis=1)
+            )
+        else:
+            out = np.empty((size, total), dtype=np.int64)
+            for csize, clusters, scatter, pvals in plan.multinomial_groups_per_level[
+                level
+            ]:
+                flat_n = (csize * weights[:, clusters]).ravel()
+                draws = rng.multinomial(flat_n, pvals)
+                out[:, scatter] = draws.reshape(size, len(clusters), csize)
+            weights = out
+    return weights
+
+
 def _draw_multinomial_level(weights, groups, total, rng):
     """One nested Efron resampling step: each cluster's weight is split
     among its children by a uniform multinomial draw."""
@@ -449,12 +507,12 @@ class Permuter:
     >>> permute = Permuter(random_state=1)
     >>> permute.fit(test, col_to_permute=0, exact=False)
     >>> permute.transform(test)
-    array([[1., 1., 1.],
-           [2., 2., 1.],
-           [2., 3., 1.],
+    array([[2., 1., 1.],
+           [1., 2., 1.],
+           [1., 3., 1.],
            [1., 1., 1.],
            [2., 2., 1.],
-           [1., 3., 1.]])
+           [2., 3., 1.]])
 
     If exact=True, Permuter will not repeat a permutation until all possible
     permutations have been exhausted.
@@ -481,12 +539,12 @@ class Permuter:
     >>> permute = Permuter(random_state=2)
     >>> permute.fit(test, col_to_permute=1, exact=False)
     >>> permute.transform(test)
-    array([[1., 1., 1.],
+    array([[1., 3., 1.],
+           [1., 1., 1.],
            [1., 2., 1.],
-           [1., 3., 1.],
-           [2., 1., 1.],
+           [2., 3., 1.],
            [2., 2., 1.],
-           [2., 3., 1.]])
+           [2., 1., 1.]])
 
     Exact within-cluster permutations are not implemented, but there are typically
     too many to be worth attempting.
@@ -571,15 +629,15 @@ class PermutationPlan:
     A permutable *unit* is a distinct row of the design columns up to and
     including the column after the target column: whole clusters move
     together when the target column is above the row level. ``unit_values``
-    holds each unit's target-column value; ``stratum_ids`` groups units that
-    may exchange values (all zeros when the target column is column 0);
-    ``row_repeats`` expands unit labels back to data rows, or None when
-    units and rows coincide.
+    holds each unit's target-column value; ``stratum_starts`` bounds the
+    runs of units that may exchange values (a single [0, n] stratum when
+    the target column is column 0); ``row_repeats`` expands unit labels
+    back to data rows, or None when units and rows coincide.
     """
 
     col: int
     unit_values: np.ndarray
-    stratum_ids: np.ndarray
+    stratum_starts: np.ndarray
     row_repeats: Union[np.ndarray, None]
 
 
@@ -601,12 +659,14 @@ def permutation_plan(data: np.ndarray, col_to_permute: int) -> PermutationPlan:
         data[:, : col_to_permute + 2], return_index=True, return_counts=True, axis=0
     )
     if col_to_permute == 0:
-        stratum_ids = np.zeros(len(values), dtype=np.int64)
+        stratum_starts = np.array([0, len(values)])
     else:
-        stratum_ids = np.unique(values[:, :-2], axis=0, return_inverse=True)[1].ravel()
+        ids = np.unique(values[:, :-2], axis=0, return_inverse=True)[1].ravel()
+        changes = np.flatnonzero(ids[1:] != ids[:-1]) + 1
+        stratum_starts = np.concatenate(([0], changes, [len(values)]))
     unit_values = values[:, -2].copy()
     row_repeats = None if indexes.size == len(data) else counts
-    return PermutationPlan(col_to_permute, unit_values, stratum_ids, row_repeats)
+    return PermutationPlan(col_to_permute, unit_values, stratum_starts, row_repeats)
 
 
 def draw_permuted_labels(
@@ -629,12 +689,11 @@ def draw_permuted_labels(
     -------
     2D array of shape (size, number of data rows)
     """
-    n_units = len(plan.unit_values)
-    # sorting random keys offset by stratum id keeps every unit inside its
-    # stratum while shuffling uniformly within it
-    keys = plan.stratum_ids + rng.random((size, n_units))
-    order = np.argsort(keys, axis=1)
-    labels = plan.unit_values[order]
+    labels = np.tile(plan.unit_values, (size, 1))
+    for start, stop in zip(plan.stratum_starts[:-1], plan.stratum_starts[1:]):
+        if stop - start > 1:
+            block = labels[:, start:stop]
+            rng.permuted(block, axis=1, out=block)
     if plan.row_repeats is not None:
         labels = np.repeat(labels, plan.row_repeats, axis=1)
     return labels

@@ -321,6 +321,27 @@ class GroupbyMean:
             out[:, -1] = np.add.reduceat(coefficients * weighted, out_starts)
         return out
 
+    def transform_batch(self, values, iterations=1):
+        """Aggregate a batch of dependent-variable vectors at once.
+
+        Parameters
+        ----------
+        values : 2D numeric array of shape (batch, rows)
+            One row per sample of dependent-variable values sharing the
+            fitted reference geometry (e.g. bootstrap-weighted y columns).
+        iterations : int, optional
+            Number of reductions to perform, by default 1
+
+        Returns
+        -------
+        2D numeric array of shape (batch, aggregated clusters)
+            Each row aggregated exactly as transform() would aggregate it.
+        """
+        if iterations == 0:
+            return values
+        coefficients, out_starts = self._coefficients(iterations)
+        return np.add.reduceat(coefficients * values, out_starts, axis=1)
+
     def fit_transform(self, target, reference_data=None, iterations=1):
         """Combines fit() and transform() for convenience. See those methods for details."""
         if reference_data is None:

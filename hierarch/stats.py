@@ -14,6 +14,7 @@ from hierarch.internal_functions import (
 from hierarch.resampling import (
     Bootstrapper,
     Permuter,
+    draw_bootstrap_weights_batch,
     draw_permuted_labels,
     exact_label_matrix,
     permutation_plan,
@@ -292,15 +293,15 @@ def _batched_stat_factory(treatment_col, compare):
         label_a = treatment_labels[0]
 
         def _welch_batch(labels, y):
-            n = labels.shape[1]
+            n = labels.shape[-1]
             group_a = (labels == label_a).astype(np.float64)
-            n_a = float((labels[0] == label_a).sum())
+            n_a = float((labels.reshape(-1, n)[0] == label_a).sum())
             n_b = n - n_a
             y_sq = y * y
-            sum_a = (group_a * y).sum(axis=1)
-            sum_a_sq = (group_a * y_sq).sum(axis=1)
-            sum_b = y.sum() - sum_a
-            sum_b_sq = y_sq.sum() - sum_a_sq
+            sum_a = (group_a * y).sum(axis=-1)
+            sum_a_sq = (group_a * y_sq).sum(axis=-1)
+            sum_b = y.sum(axis=-1) - sum_a
+            sum_b_sq = y_sq.sum(axis=-1) - sum_a_sq
             mean_diff = sum_a / n_a - sum_b / n_b
             var_a = (sum_a_sq - sum_a**2 / n_a) / (n_a - 1)
             var_b = (sum_b_sq - sum_b**2 / n_b) / (n_b - 1)
@@ -311,18 +312,19 @@ def _batched_stat_factory(treatment_col, compare):
     elif compare == "corr":
 
         def _corr_batch(labels, y):
-            n = labels.shape[1]
+            n = labels.shape[-1]
             # constants come from the sorted multiset so every batch (and the
             # single-row observed-statistic call) computes them bit-identically
-            x_sorted = np.sort(labels[0])
+            x_sorted = np.sort(labels.reshape(-1, n)[0])
             x_mean = x_sorted.mean()
-            centered = labels - x_mean
             x_c_sorted = x_sorted - x_mean
-            y_c = y - y.mean()
-            s1 = (centered * y_c).sum(axis=1)
-            s2 = ((centered * centered) * (y_c * y_c)).sum(axis=1)
+            y_c = y - y.mean(axis=-1, keepdims=True)
+            prod = (labels - x_mean) * y_c
+            s1 = prod.sum(axis=-1)
+            prod *= prod
+            s2 = prod.sum(axis=-1)
             var_x = (x_c_sorted * x_c_sorted).sum() / (n - 1)
-            var_y = (y_c * y_c).sum() / (n - 1)
+            var_y = (y_c * y_c).sum(axis=-1) / (n - 1)
             numerator = s1 / (n - 1)
             denom_1 = s2 / (n - 2**0.5)
             denom_2 = var_x * var_y / (n - 1)
@@ -334,11 +336,12 @@ def _batched_stat_factory(treatment_col, compare):
     elif compare == "jackknife_corr":
 
         def _jackknife_batch(labels, y):
-            n = labels.shape[1]
-            centered = labels - np.sort(labels[0]).mean()
-            y_c = y - y.mean()
-            s1 = (centered * y_c).sum(axis=1)
-            s2 = ((centered * centered) * (y_c * y_c)).sum(axis=1)
+            n = labels.shape[-1]
+            y_c = y - y.mean(axis=-1, keepdims=True)
+            prod = (labels - np.sort(labels.reshape(-1, n)[0]).mean()) * y_c
+            s1 = prod.sum(axis=-1)
+            prod *= prod
+            s2 = prod.sum(axis=-1)
             return s1 * (n - 2) / ((n - 1) * (n * s2 - s1 * s1)) ** 0.5
 
         return _jackknife_batch
@@ -458,7 +461,7 @@ def hypothesis_test(
     >>> hypothesis_test(data, treatment_col=0,
     ...                 bootstraps=100, permutations=1000,
     ...                 random_state=1)
-    0.00812
+    0.0069
 
 
     """
@@ -565,38 +568,73 @@ def hypothesis_test(
 
     def _score(labels, y):
         if batched_stat is not None:
-            return batched_stat(labels, y).tolist()
-        return [teststat(row, y) for row in labels]
+            return batched_stat(labels, y)
+        return np.array([teststat(row, y) for row in labels])
 
-    # initialize empty null distribution list
-    null_distribution = []
     total = bootstraps * permutations
 
-    # first set of permutations is on the original data
-    # this helps to prevent getting a p-value of 0
-    null_distribution.extend(_score(_draw_labels(), test[:, -1]))
+    if batched_stat is not None:
+        # fully batched path: all bootstrap weight sets, aggregations,
+        # permutations, and statistics are drawn and scored in single
+        # vectorized passes. The first y row is the original (unbootstrapped)
+        # aggregated data, which prevents getting a p-value of 0. Index
+        # resamples are aggregated through their weight representation, which
+        # is exactly how the sequential resampled path computes them.
+        y_matrix = np.empty((bootstraps, test.shape[0]))
+        y_matrix[0] = test[:, -1]
+        if bootstraps > 1:
+            weights = draw_bootstrap_weights_batch(
+                bootstrapper._plan, rng, treatment_col + 2, kind, bootstraps - 1
+            )
+            y_matrix[1:] = aggregator.transform_batch(
+                weights * data[:, -1], iterations=levels_to_agg
+            )
+        if exact_labels is None:
+            labels = draw_permuted_labels(perm_plan, rng, total)
+        else:
+            rows = (
+                np.arange(bootstraps)[:, None] * permutations
+                + np.arange(permutations)[None, :]
+            ) % len(exact_labels)
+            labels = exact_labels[rows.reshape(-1)]
+        # score in cache-sized chunks: giant temporaries are slower than
+        # medium ones, so group bootstraps such that each scoring block stays
+        # around a few hundred KB
+        null_distribution = np.empty(total)
+        group = max(1, 16384 // permutations + 1)
+        for c0 in range(0, bootstraps, group):
+            c1 = min(bootstraps, c0 + group)
+            block = labels[c0 * permutations : c1 * permutations]
+            y_block = np.repeat(y_matrix[c0:c1], permutations, axis=0)
+            null_distribution[c0 * permutations : c1 * permutations] = batched_stat(
+                block, y_block
+            )
+    else:
+        # custom callable statistic: score permutations one at a time
+        null_blocks = []
 
-    # already did one set of permutations
-    bootstraps -= 1
+        # first set of permutations is on the original data
+        # this helps to prevent getting a p-value of 0
+        null_blocks.append(_score(_draw_labels(), test[:, -1]))
 
-    for j in range(bootstraps):
-        # generate a bootstrapped sample and aggregate it up to the
-        # treated level
-        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
-        bootstrapped_sample = aggregator.transform(
-            bootstrapped_sample, iterations=levels_to_agg, resampled=(kind == "indexes")
-        )
+        for j in range(bootstraps - 1):
+            # generate a bootstrapped sample and aggregate it up to the
+            # treated level
+            bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
+            bootstrapped_sample = aggregator.transform(
+                bootstrapped_sample,
+                iterations=levels_to_agg,
+                resampled=(kind == "indexes"),
+            )
 
-        # score a fresh batch of permutations against this sample's y values
-        null_distribution.extend(_score(_draw_labels(), bootstrapped_sample[:, -1]))
+            # score a fresh batch of permutations against this sample
+            null_blocks.append(_score(_draw_labels(), bootstrapped_sample[:, -1]))
+
+        null_distribution = np.concatenate(null_blocks)
 
     # generate both one-tailed p-values, then two-tailed
-    p_less = np.where(truediff >= np.array(null_distribution))[0].size / len(
-        null_distribution
-    )
-    p_greater = np.where(truediff <= np.array(null_distribution))[0].size / len(
-        null_distribution
-    )
+    p_less = np.count_nonzero(truediff >= null_distribution) / len(null_distribution)
+    p_greater = np.count_nonzero(truediff <= null_distribution) / len(null_distribution)
     p_two = 2 * np.min((p_less, p_greater))
 
     if alternative == "two-sided":
@@ -610,7 +648,7 @@ def hypothesis_test(
         pval += 1 / (total)
 
     if return_null is True:
-        return float(pval), null_distribution
+        return float(pval), null_distribution.tolist()
 
     else:
         return float(pval)
@@ -1102,7 +1140,7 @@ def confidence_interval(
     >>> confidence_interval(data, treatment_col=0, interval=95,
     ...                 compare='corr', bootstraps=100,
     ...                 permutations=1000, random_state=1)
-    (0.8345527417968539, 1.6183856755907375)
+    (0.83297255712053, 1.6195336227023118)
 
     The dataset was specified to have a true slope of 1, which is within the interval.
 
@@ -1286,12 +1324,12 @@ def _compute_interval(null, null_data, treatment_col, quantile, std_error_fn):
     >>> data = datagen.generate()
     >>> null = np.array(hypothesis_test(data, 0, return_null=True, random_state=5)[1])
     >>> _compute_interval(null, data, 0, 0.025, _cov_std_error)
-    -1.601785379845505
+    -1.6154082371193477
 
     The test statistic distribution is essentially symmetric about 0.
 
     >>> _compute_interval(null, data, 0, 0.975, _cov_std_error)
-    1.620753281846703
+    1.5948320549412573
 
     """
     x = null_data[:, treatment_col]
