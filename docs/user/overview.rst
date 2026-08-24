@@ -2,7 +2,8 @@ Overview
 ========
 
 hierarch is a package for hierarchical resampling (bootstrapping, permutation) of datasets in Python. 
-Because for loops are ultimately intrinsic to cluster-aware resampling, hierarch uses Numba to accelerate many of its key functions.
+Resampling is batched and vectorized with numpy, so cluster-aware bootstraps and permutations
+are drawn without Python-level loops over the hierarchy.
 
 hierarch has several functions to assist in performing resampling-based hypothesis tests on hierarchical data. 
 Additionally, hierarch can be used to construct power analyses for hierarchical experimental designs.
@@ -49,12 +50,20 @@ Here is the sort of data that hierarch is designed to perform hypothesis tests o
 | +Treatment |   6  |      3      | 5.686654 |
 +------------+------+-------------+----------+
 
+Describe the design with a formula and hierarch builds the matrix its tests expect.
 The code to perform a hierarchical permutation t-test on this dataset looks like::
 
+    from hierarch.design import design_matrix
     from hierarch.stats import hypothesis_test
 
-    hypothesis_test(data, treatment_col='Condition',
-                    bootstraps=1000, permutations='all')
+    matrix, treatment_col = design_matrix(
+        data, "Values ~ Condition/Well/Measurement", treatment="Condition"
+    )
+    hypothesis_test(matrix, treatment_col, bootstraps=1000, permutations='all')
+
+The formula's right-hand side is the nesting chain, written outermost-first: wells are
+nested within conditions and measurements within wells. See :doc:`importing` for the
+column layout this produces and for passing pre-arranged arrays directly.
 
 If you find hierarch useful for analyzing your data, please consider citing it. 
 

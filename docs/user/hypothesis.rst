@@ -57,49 +57,63 @@ file or copy it in from the clipboard, as below. ::
 | +Treatment |   6  |      3      | 5.686654 |
 +------------+------+-------------+----------+
 
-It is important to note that the ordering of the columns from left to right 
-reflects the experimental design scheme. This is necessary for hierarch 
-to infer the clustering within your dataset. In case your data is not 
-ordered properly, pandas makes it easy enough to index your data in the 
-correct order. ::
+hierarch infers the clustering in your dataset from the order of the columns,
+which has to run from the outermost level of the hierarchy to the innermost.
+Rather than arranging the columns by hand, describe the design with a formula
+and let design_matrix arrange them. The right-hand side is the nesting chain,
+written outermost-first - here, wells within conditions and measurements
+within wells. ::
 
+    from hierarch.design import design_matrix
 
-    columns = ['Condition', 'Coverslip', 'Field of View', 'Mean Fluorescence']
+    matrix, treatment_col = design_matrix(
+        data, "Values ~ Condition/Well/Measurement", treatment="Condition"
+    )
 
-    data[columns]
+The position of the treatment variable in the chain is what declares the design.
+``Values ~ Condition/Well`` describes wells nested within treatment groups, as
+above, while ``Values ~ Well/Condition`` would describe a design in which both
+conditions were applied within every well.
 
 Next, you can call hypothesis_test from hierarch's stats module, which will 
-calculate the p-value. You have to specify what column is the treatment 
-column - in this case, "Condition." Indexing starts at 0, so you input 
-treatment_col=0. In this case, there are only 6c3 = 20 ways to permute the 
+calculate the p-value. design_matrix hands back the name of the treatment column 
+along with the matrix. In this case, there are only 6c3 = 20 ways to permute the 
 treatment labels, so you should specify "all" permutations be used. ::
 
     from hierarch.stats import hypothesis_test
 
-    p_val = hypothesis_test(data, treatment_col=0, compare='means',
+    p_val = hypothesis_test(matrix, treatment_col, compare='means',
                                      bootstraps=500, permutations='all', 
                                      random_state=1)
 
     print('p-value =', p_val)
 
-    #out: p-value = 0.0406
+    #out: p-value = 0.0408
+
+If your data is already arranged in hierarchical column order, you can skip
+design_matrix and identify the treatment column by position instead -
+``hypothesis_test(data, treatment_col=0, ...)`` gives the same result. See
+:doc:`importing` for that layout.
 
 There are a number of parameters that can be used to modify hypothesis_test. ::
 
-    hypothesis_test(data_array, 
-                    treatment_col, 
-                    compare="means", 
-                    skip=None, 
-                    bootstraps=100, 
-                    permutations=1000, 
-                    kind='weights', 
+    hypothesis_test(data_array,
+                    treatment_col,
+                    compare="corr",
+                    alternative="two-sided",
+                    skip=None,
+                    bootstraps=100,
+                    permutations=1000,
+                    kind='weights',
                     return_null=False,
                     random_state=None)
 
-**compare**: The default "means" assumes that you are testing for a difference in means, so it uses the Welch t-statistic. 
-"corr" uses a studentized covariance based test statistic which gives the same result as the Welch t-statistic for two-sample
-datasets, but can be used on datasets with any number of related treatment groups. For flexibility, hypothesis_test can 
-also take a test statistic function as an argument.
+**compare**: The default "corr" uses a studentized covariance based test statistic, which gives the same
+result as the Welch t-statistic for two-sample datasets but can be used on datasets with any number of
+related treatment groups. "means" uses the Welch t-statistic itself and is restricted to two samples.
+"jackknife_corr" uses the jackknife studentized covariance test statistic. For flexibility, hypothesis_test
+can also take a test statistic function as an argument - it receives a (permutations, n) array of permuted
+treatment columns and a row-aligned array of dependent values, and must return one statistic per permutation.
 
 **alternative** : "two-sided" or "less" or "greater" specifies the alternative hypothesis. "two-sided" conducts
 a two-tailed test, while "less" or "greater" conduct the appropriate one-tailed test.
@@ -119,13 +133,13 @@ Generally, as the number of possible permutations of your data increases, the nu
 
 **permutations**: indicates the number of permutations of the treatment label PER bootstrapped sample.
 
-Inputting "all" will enumerate all of the possible permutations and iterate through them one by one. This is done using a generator, so the permutations are not stored in memory, but is still excessively time consuming for large datasets. 
+Inputting "all" enumerates every distinct permutation and scores them as a single batch. This gives an exact test, but the permutation matrix is materialized in memory and grows quickly, so "all" is only practical for small datasets.
 
 **kind**: "weights" or "indexes" or "bayesian" specifies the bootstrapping algorithm. "weights" returns an array the same size as the input array, but with the data reweighted according to the Efron bootstrap procedure. "indexes" uses the same algorithm, but returns a reindexed array. "bayesian" also returns a reweighted array, but the weights are allowed to be any real number rather than just integers.
 
 **return_null**: setting this to True will also return the empirical null distribution as a list.
 
-**seed**: allows you to specify a random seed for reproducibility. 
+**random_state**: an int seed or a numpy Generator, for reproducibility.
 
 Many-Sample Hypothesis Tests - Several Hypotheses
 -------------------------------------------------
@@ -238,29 +252,32 @@ using multi_sample_test as follows. ::
     multi_sample_test(data, treatment_col=0, hypotheses="all",
                     correction=None, bootstraps=1000,
                     permutations="all", random_state=111)
-    
-    array([[2.0, 3.0, 0.0355],
-           [1.0, 3.0, 0.0394],
-           [3.0, 4.0, 0.0407],
-           [2.0, 4.0, 0.1477],
-           [1.0, 2.0, 0.4022],
-           [1.0, 4.0, 0.4559]], dtype=object)
+
+      Condition 1 Condition 2 p-value
+    0         3.0         4.0   0.035
+    1         2.0         3.0  0.0353
+    2         1.0         3.0  0.0414
+    3         2.0         4.0  0.1504
+    4         1.0         2.0  0.4029
+    5         1.0         4.0  0.4519
 
 The first two columns indicate the conditions being compared, while the last column indicates
 the uncorrected p-value. Because there are several hypotheses being tested, it is advisable
 to make a multiple comparisons correction. Currently, hierarch can automatically perform the
 Benjamini-Hochberg procedure, which controls False Discovery Rate. By indicating the "fdr"
-correction, the output array has an additional column showing the q-values, or adjusted p-values. ::
+correction, the output has an additional column showing the q-values, or adjusted p-values. ::
 
     multi_sample_test(data, treatment_col=0, hypotheses="all",
                     correction='fdr', bootstraps=1000,
                     permutations="all", random_state=111)
-    array([[2.0, 3.0, 0.0355, 0.0814],
-           [1.0, 3.0, 0.0394, 0.0814],
-           [3.0, 4.0, 0.0407, 0.0814],
-           [2.0, 4.0, 0.1477, 0.22155],
-           [1.0, 2.0, 0.4022, 0.4559],
-           [1.0, 4.0, 0.4559, 0.4559]], dtype=object)
+
+      Condition 1 Condition 2 p-value Corrected p-value
+    0         3.0         4.0   0.035            0.0828
+    1         2.0         3.0  0.0353            0.0828
+    2         1.0         3.0  0.0414            0.0828
+    3         2.0         4.0  0.1504            0.2256
+    4         1.0         2.0  0.4029            0.4519
+    5         1.0         4.0  0.4519            0.4519
 
 Testing more hypotheses necessarily lowers the p-value required to call a result significant. However,
 we are not always interested in performing every comparison - perhaps condition 2 is a control that all
@@ -270,9 +287,11 @@ other conditions are meant to be compared to. The comparisons of interest can be
     multi_sample_test(data, treatment_col=0, hypotheses=tests,
                       correction='fdr', bootstraps=1000,
                       permutations="all", random_state=222)
-    array([[2.0, 3.0, 0.036, 0.108],
-           [2.0, 4.0, 0.1506, 0.2259],
-           [2.0, 1.0, 0.4036, 0.4036]], dtype=object)
+
+      Condition 1 Condition 2 p-value Corrected p-value
+    0         2.0         3.0   0.035             0.105
+    1         2.0         4.0  0.1521           0.22815
+    2         2.0         1.0  0.4066            0.4066
 
 Many-Sample Hypothesis Tests - Single Hypothesis
 ------------------------------------------------
@@ -360,12 +379,12 @@ give very similar p-values. ::
     hypothesis_test(data, treatment_col=0, compare="corr",
                         bootstraps=1000, permutations='all',
                         random_state=1)
-    0.013714285714285714
+    0.012514285714285714
 
     hypothesis_test(data, treatment_col=0, compare="means",
                     bootstraps=1000, permutations='all',
                     random_state=1)
-    0.013714285714285714
+    0.012514285714285714
 
 However, unlike the Welch t-statistic, studentized covariance can handle any number of conditions. Consider instead
 a dataset with four treatment conditions that have a linear relationship. ::
@@ -435,7 +454,7 @@ subset of them to compute the p-value. ::
     hypothesis_test(data, treatment_col=0,
                         bootstraps=100, permutations=1000,
                         random_state=1)
-    0.00767
+    0.0069
 
 Between these three tests, researchers can address a large variety of experimental designs. Unfortunately,
 interaction effects are outside the scope of permutation tests - it is not possible to construct an

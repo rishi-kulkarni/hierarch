@@ -84,3 +84,37 @@ The innermost replicate level does not need an id column. If the
 innermost named cells contain more than one row, a replicate index
 column is synthesized. If the data does have an id column for that level,
 name it in the chain instead; both forms produce the same test.
+
+The Underlying Column Layout
+----------------------------
+
+design_matrix is a convenience layer over the layout the tests actually consume,
+and a numpy array or DataFrame already in that layout can be passed directly.
+The contract is:
+
+* One row per measurement.
+* Grouping columns ordered from the outermost level of the hierarchy to the
+  innermost, left to right, with the dependent variable in the last column.
+* The treatment column identified by position (``treatment_col=0``) or, for a
+  DataFrame, by name (``treatment_col="Condition"``).
+
+::
+
+    from hierarch.stats import hypothesis_test
+
+    hypothesis_test(data, treatment_col=0, bootstraps=1000, permutations="all")
+
+Non-numeric columns are label encoded and rows are sorted into hierarchical
+order internally, so cluster ids only need to be unique within their enclosing
+cluster. Note that this is the one guarantee design_matrix strengthens: it
+relabels every level by its composite key, so an id reused under two different
+parents stays distinct in the output you read back.
+
+Since design_matrix returns a ``(data, treatment_col)`` named tuple, it can also
+be splatted straight into any of the tests::
+
+    hypothesis_test(
+        *design_matrix(data, "Values ~ Condition/Well/Measurement", treatment="Condition"),
+        bootstraps=1000,
+        permutations="all",
+    )
