@@ -12,8 +12,8 @@ from hierarch.internal_functions import (
     bivar_central_moment,
 )
 from hierarch.resampling import (
-    Bootstrapper,
-    Permuter,
+    BOOTSTRAP_KINDS,
+    bootstrap_plan,
     draw_bootstrap_weights_batch,
     draw_permuted_labels,
     exact_label_matrix,
@@ -314,9 +314,7 @@ def _batched_stat_factory(treatment_col, compare):
             y_c = y - np.mean(y, axis=-1, keepdims=True)
             y_c2 = y_c * y_c
             sum_yc2 = y_c2.sum(axis=-1)
-            s1 = np.einsum("...m,...m->...", labels, y_c) - x_mean * y_c.sum(
-                axis=-1
-            )
+            s1 = np.einsum("...m,...m->...", labels, y_c) - x_mean * y_c.sum(axis=-1)
             t1 = np.einsum("...m,...m->...", labels, y_c2)
             t2 = np.einsum("...m,...m,...m->...", labels, labels, y_c2)
             s2 = t2 - 2.0 * x_mean * t1 + x_mean * x_mean * sum_yc2
@@ -337,9 +335,7 @@ def _batched_stat_factory(treatment_col, compare):
             x_mean = np.sort(np.reshape(labels, (-1, n))[0]).mean()
             y_c = y - np.mean(y, axis=-1, keepdims=True)
             y_c2 = y_c * y_c
-            s1 = np.einsum("...m,...m->...", labels, y_c) - x_mean * y_c.sum(
-                axis=-1
-            )
+            s1 = np.einsum("...m,...m->...", labels, y_c) - x_mean * y_c.sum(axis=-1)
             t1 = np.einsum("...m,...m->...", labels, y_c2)
             t2 = np.einsum("...m,...m,...m->...", labels, labels, y_c2)
             s2 = t2 - 2.0 * x_mean * t1 + x_mean * x_mean * y_c2.sum(axis=-1)
@@ -399,8 +395,11 @@ def hypothesis_test(
     permutations : int or "all", optional
         Number of permutations to perform PER bootstrap sample. "all"
         for exact test (only works if there are only two treatments), by default 1000
-    kind : str, optional
-        Bootstrap algorithm - see Bootstrapper class, by default "weights"
+    kind : {"weights", "indexes", "bayesian"}, optional
+        Bootstrap algorithm, by default "weights". "weights" and "bayesian"
+        reweight each datapoint (integer and real weights, respectively);
+        "indexes" resamples row indexes, which is mathematically equivalent
+        to "weights" but produces an array of a different size.
     return_null : bool, optional
         Return the null distribution as well as the p value, by default False
     random_state : int or numpy random Generator, optional
@@ -503,9 +502,10 @@ def hypothesis_test(
     elif not isinstance(permutations, int) or permutations < 1:
         raise TypeError("permutations must be 'all' or an integer greater than 0")
 
-    # initialize and fit the bootstrapper to the data
-    bootstrapper = Bootstrapper(random_state=rng, kind=kind)
-    bootstrapper.fit(data, skip=skip)
+    # validate the bootstrap algorithm and precompute the bootstrap plan
+    if kind not in BOOTSTRAP_KINDS:
+        raise KeyError("Invalid 'kind' argument.")
+    plan = bootstrap_plan(data[:, :-1], skip=skip)
 
     # fetch a vectorized test statistic from the built-in dictionary or, if
     # given a custom statistic, make sure it is callable and wrap it with
@@ -576,7 +576,7 @@ def hypothesis_test(
     y_matrix[0] = test[:, -1]
     if bootstraps > 1:
         weights = draw_bootstrap_weights_batch(
-            bootstrapper._plan, rng, treatment_col + 2, kind, bootstraps - 1
+            plan, rng, treatment_col + 2, kind, bootstraps - 1
         )
         y_matrix[1:] = aggregator.transform_batch(
             weights * data[:, -1], iterations=levels_to_agg
@@ -675,9 +675,10 @@ def multi_sample_test(
     permutations : int or "all"
         Number of permutations to perform PER bootstrap sample. "all"
         for exact test, by default 1000
-    kind : str, optional
-        Bootstrapper algorithm. See Bootstrapper class, by default "weights"
-    seed : int or numpy.random.Generator instance, optional
+    kind : {"weights", "indexes", "bayesian"}, optional
+        Bootstrap algorithm, by default "weights". See
+        :func:`hierarch.stats.hypothesis_test`.
+    random_state : int or numpy.random.Generator instance, optional
         Seedable for reproducibility, by default None
 
     Returns
@@ -1042,8 +1043,9 @@ def confidence_interval(
     permutations : int or "all", optional
         Number of permutations to perform PER bootstrap sample. "all"
         for exact test (only works if there are only two treatments), by default 1000
-    kind : str, optional
-        Bootstrap algorithm - see Bootstrapper class, by default "bayesian"
+    kind : {"weights", "indexes", "bayesian"}, optional
+        Bootstrap algorithm, by default "bayesian". See
+        :func:`hierarch.stats.hypothesis_test`.
     random_state : int or numpy random Generator, optional
         Seedable for reproducibility., by default None
 
@@ -1464,29 +1466,29 @@ def hierarchical_randomization(
     elif not isinstance(permutations, int) or permutations < 1:
         raise TypeError("permutations must be 'all' or an integer greater than 0")
 
-    # initialize and fit the bootstrapper to the data
-    bootstrapper = Bootstrapper(random_state=rng, kind="indexes")
-    bootstrapper.fit(data, skip=skip)
+    # precompute the bootstrap plan and draw every bootstrap's index weights
+    # at once; each row's weight is how many times that row is repeated
+    plan = bootstrap_plan(data[:, :-1], skip=skip)
+    weights_batch = draw_bootstrap_weights_batch(
+        plan, rng, treatment_col + 2, "indexes", bootstraps
+    )
 
     for i in range(bootstraps):
         # get a bootstrap sample
-        bootstrapped_sample = bootstrapper.transform(data, start=treatment_col + 2)
-
-        # initialize and fit the permuter to the aggregated data
-        permuter = Permuter(random_state=rng)
+        bootstrapped_sample = data[
+            np.repeat(np.arange(data.shape[0]), weights_batch[i])
+        ]
 
         if permutations == "all":
-            permuter.fit(bootstrapped_sample, treatment_col, exact=True)
-
-            # in the exact case, determine and set the total number of
-            # possible permutations
-            counts = np.unique(bootstrapped_sample[:, 0], return_counts=True)[1]
-            permutations = _binomial(counts.sum(), counts[0])
-
+            # exact test: every distinct labeling of the treatment column,
+            # recomputed for this bootstrap sample every iteration
+            labels = exact_label_matrix(bootstrapped_sample, treatment_col)
         else:
-            # just fit the permuter if this is a randomized test
-            permuter.fit(bootstrapped_sample, treatment_col)
+            perm_plan = permutation_plan(bootstrapped_sample, treatment_col)
+            labels = draw_permuted_labels(perm_plan, rng, permutations)
 
-        for j in range(permutations):
+        for j in range(labels.shape[0]):
             # yield a permuted sample
-            yield permuter.transform(bootstrapped_sample)
+            out = bootstrapped_sample.copy()
+            out[:, treatment_col] = labels[j]
+            yield out

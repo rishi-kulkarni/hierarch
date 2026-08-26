@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from hierarch.internal_functions import GroupbyMean
-from hierarch.resampling import Bootstrapper
+from hierarch.resampling import bootstrap_plan, draw_bootstrap_weights
 from tests.conftest import design_names
 from tests._reference import groupby_mean, nested_weighted_mean
 
@@ -29,6 +29,17 @@ def _is_balanced(hier):
     return all(isinstance(h, int) for h in hier)
 
 
+def _transform(plan, rng, start, kind, data):
+    """Draw one set of bootstrap weights and apply them, mirroring the old
+    Bootstrapper.transform contract."""
+    weights = draw_bootstrap_weights(plan, rng, start, kind)
+    if kind == "indexes":
+        return data.astype(np.float64)[np.repeat(np.arange(data.shape[0]), weights)]
+    out = data.astype(np.float64).copy()
+    out[:, -1] = out[:, -1] * weights
+    return out
+
+
 class TestBootstrapKindsAgree:
     @pytest.mark.parametrize("name", design_names())
     def test_indexes_and_weights_agree_after_aggregation(self, name, design_pool):
@@ -37,17 +48,18 @@ class TestBootstrapKindsAgree:
         the two are indistinguishable."""
         hier, data = design_pool[name]
         ncols = data.shape[1]
-        # NB: seeding is (currently) a global side effect, so build and use each
-        # bootstrapper in sequence rather than constructing both up front.
+        plan = bootstrap_plan(data[:, :-1])
         for start in range(1, ncols - 1):
             iterations = ncols - 1 - start  # aggregate to level start-1
             for seed in range(3):
-                bw = Bootstrapper(random_state=seed, kind="weights")
-                bw.fit(data)
-                w_out = bw.transform(data, start=start)
-                bi = Bootstrapper(random_state=seed, kind="indexes")
-                bi.fit(data)
-                i_out = bi.transform(data, start=start)
+                # same seed => same underlying draw for "weights" and "indexes",
+                # which only differ in how the draw is applied to the data
+                w_out = _transform(
+                    plan, np.random.default_rng(seed), start, "weights", data
+                )
+                i_out = _transform(
+                    plan, np.random.default_rng(seed), start, "indexes", data
+                )
                 g = GroupbyMean()
                 g.fit(data)
                 np.testing.assert_allclose(
@@ -82,19 +94,20 @@ class TestGroupbyMeanContract:
         ncols = data.shape[1]
         unit = data.copy()
         unit[:, -1] = 1.0
+        plan = bootstrap_plan(data[:, :-1])
         for start in range(1, ncols - 1):
             iterations = ncols - 1 - start
             for seed in range(3):
                 wkind = "weights" if kind == "indexes" else kind
-                boot = Bootstrapper(random_state=seed, kind=wkind)
-                boot.fit(unit)
-                w = boot.transform(unit, start=start)[:, -1]  # per-row weights
+                w = _transform(plan, np.random.default_rng(seed), start, wkind, unit)[
+                    :, -1
+                ]  # per-row weights
                 if kind == "indexes":
                     # same seed => same resample as 'weights'; the transform of
                     # the real data is the row-expanded sample
-                    boot = Bootstrapper(random_state=seed, kind=kind)
-                    boot.fit(data)
-                    sample = boot.transform(data, start=start)
+                    sample = _transform(
+                        plan, np.random.default_rng(seed), start, kind, data
+                    )
                     ref_weights = np.bincount(
                         [
                             int(np.flatnonzero((data[:, :-1] == r[:-1]).all(1))[0])
