@@ -199,7 +199,7 @@ def welch_statistic(sample_a, sample_b):
 
 
     Notes
-    ----------
+    -----
     Details on the validity of this test statistic can be found in
     "Studentized permutation tests for non-i.i.d. hypotheses and the
     generalized Behrens-Fisher problem" by Arnold Janssen.

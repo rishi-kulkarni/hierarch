@@ -18,6 +18,7 @@ class DataSimulator:
     ways of specifying the same parameters (no treatment effect, both
     columns are randomly generated Gaussian variables).
 
+    >>> import scipy.stats as stats
     >>> paramlist = [[0, 0], [[stats.norm]]*6, [stats.norm, 0, 1]]
     >>> paramlist = [[0]*2, [stats.norm], [stats.norm]]
 
@@ -86,6 +87,7 @@ class DataSimulator:
 
         Examples
         --------
+        >>> import scipy.stats as stats
         >>> paramlist = [[0, 0], [stats.norm], [stats.norm]]
         >>> datagen = DataSimulator(paramlist, random_state=1)
         >>> hierarchy = [2, 3, 3]

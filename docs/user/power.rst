@@ -19,6 +19,8 @@ that you want to achieve 80% power for a mean difference equal to one standard
 deviation. You calculate that the summed standard deviation of the two 
 distributions you specified is 1.525 and input that as a parameter, as well. ::
 
+    import numpy as np
+    import scipy.stats as stats
     from hierarch.power import DataSimulator
 
     parameters = [[0, 1.525], #difference in means due to treatment
@@ -32,16 +34,14 @@ decide to start with three samples per treatment condition and three measurement
 within each sample. Calling the .fit() function will ready the DataSimulator to 
 produce randomly-generated data according to this experimental scheme. ::
 
-    import scipy.stats as stats
-
     hierarchy = [2, #treatments
                 3, #samples
                 3] #within-sample measurements
 
     sim.fit(hierarchy)
 
-    By calling the .generate() function, DataSimulator uses the prespecified 
-    parameters to generate a simulated dataset. ::
+By calling the .generate() function, DataSimulator uses the prespecified 
+parameters to generate a simulated dataset. ::
 
     print(sim.generate())
 
@@ -101,7 +101,7 @@ a significant result, assuming a p-value cutoff of 0.05. ::
         
     print(np.less(pvalues, 0.05).sum() / loops) 
 
-    #out: 0.29
+    #out: 0.27
 
 The targeted power is 0.8, so you can fit the DataSimulator with a larger sample 
 size. You can run the following code block with different sample sizes until 
@@ -117,7 +117,7 @@ you determine the column 1 sample size that achieves at least 80% power. ::
         
     print(np.less(pvalues, 0.05).sum() / loops)
 
-    #out: 0.81
+    #out: 0.84
 
 You note, however, that increasing the number of column 1 samples is much 
 more laborious than increasing the number of column 2 samples. For example, 
@@ -140,7 +140,7 @@ achieved with an experimental design that makes more column 2 measurements. ::
         
     print(np.less(pvalues, 0.05).sum() / loops)
 
-    #out: 0.84
+    #out: 0.8
 
 Of course, adding column 2 samples has a much more limited 
 influence on power compared to adding column 1 samples - with infinite 
@@ -148,7 +148,7 @@ column 2 samples, the standard error for the difference of means is
 still dependent on the variance of the column 1 data-generating process. 
 This is illustrated with an excessive example of 300 column 2 samples 
 per column 1 sample, which shows no improvement in power over using 
-only 30 column 2 samples. ::
+only 30 column 2 samples - the difference is within Monte Carlo error. ::
 
     sim.fit([2,8,300])
 
@@ -160,10 +160,10 @@ only 30 column 2 samples. ::
         
     print(np.less(pvalues, 0.05).sum() / loops)
     
-    #out: 0.83
+    #out: 0.82
 
 On the other hand, adding only four column 1 samples to each treatment group 
-(rather than 270 to each column 1 sample) brings the power to 97%. 
+(rather than 270 to each column 1 sample) brings the power to 96%. 
 
 Finally, to ensure that hierarchical permutation is valid for the posited 
 data-generating process, you can do another power analysis under the null 
@@ -175,7 +175,7 @@ the error for an event that happens 5% probability is +/- 2%, but at
     parameters = [[0, 0], #no difference in means because we are sampling under the null hypothesis
                 [stats.norm, 0, 1], #column 1 probability distribution  
                 [stats.lognorm, 0.75]] #column 2 probability distribution
-    sim = ha.power.DataSimulator(parameters, random_state=1)
+    sim = DataSimulator(parameters, random_state=1)
     sim.fit([2,12,30])
 
     pvalues = []
@@ -186,7 +186,7 @@ the error for an event that happens 5% probability is +/- 2%, but at
         
     print(np.less(pvalues, 0.05).sum() / loops)
 
-    #out: 0.05
+    #out: 0.051
 
 Hierarchical permutation experiences no size distortion for this experimental 
 design and is therefore a valid test.  

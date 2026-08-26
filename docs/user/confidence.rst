@@ -60,14 +60,20 @@ are the bounds of the confidence interval. Let's consider the dataset from earli
 | +Treatment |   6  |      3      | 5.686654 |
 +------------+------+-------------+----------+
 
-You can use the confidence_interval function in hierarch.stats to compute the 
-confidence interval. ::
+As in :doc:`hypothesis`, describe the design with a formula and let design_matrix
+arrange the columns, then pass the result to the confidence_interval function in
+hierarch.stats. ::
 
+    from hierarch.design import design_matrix
     from hierarch.stats import confidence_interval
 
+    matrix, treatment_col = design_matrix(
+        data, "Values ~ Condition/Well/Measurement", treatment="Condition"
+    )
+
     confidence_interval(
-    data,
-    treatment_col=0,
+    matrix,
+    treatment_col,
     compare='means',
     interval=95,
     bootstraps=500,
@@ -75,7 +81,7 @@ confidence interval. ::
     random_state=1,
     )
 
-    (-0.5373088054909549, -0.12010079984237881)
+    (-0.5479315866264927, -0.1094779689290622)
 
 This interval does not cross 0, so it is consistent with significance at the alpha = 0.05
 level.
@@ -85,8 +91,8 @@ the same input parameters as hypothesis_test. However,
 the new **interval** parameter determines the width of the interval. ::
 
     confidence_interval(
-    data,
-    treatment_col=0,
+    matrix,
+    treatment_col,
     compare='means',
     interval=99,
     bootstraps=500,
@@ -94,11 +100,11 @@ the new **interval** parameter determines the width of the interval. ::
     random_state=1,
     )
 
-    (-0.9086402840632387, 0.25123067872990457)
+    (-1.3468994665527148, 0.45712157079073745)
 
     confidence_interval(
-    data,
-    treatment_col=0,
+    matrix,
+    treatment_col,
     compare='means',
     interval=68,
     bootstraps=500,
@@ -106,15 +112,19 @@ the new **interval** parameter determines the width of the interval. ::
     random_state=1,
     )
 
-    (-0.40676489798778065, -0.25064470734555316)
+    (-0.41319509143927136, -0.24795060504641658)
 
 The 99% confidence interval does indeed cross 0, so we could not reject the null hypothesis
-at the alpha = 0.01 level.
+at the alpha = 0.01 level. Note that this dataset admits only 6c3 = 20 distinct permutations,
+so the smallest attainable tail probability is coarser than the 0.005 a 99% interval asks
+for. hierarch raises a ConvergenceWarning here to say that the endpoints it returns bracket
+the requested level rather than hit it exactly.
 
 To build your confidence, you can perform a simulation analysis to ensure 
 the confidence interval achieves the nominal coverage. You can set up a 
 DataSimulator using the functions in hierarch.power as follows. ::
 
+    import scipy.stats as stats
     from hierarch.power import DataSimulator
 
     parameters = [[0, 1.525], #difference in means due to treatment
@@ -122,8 +132,6 @@ DataSimulator using the functions in hierarch.power as follows. ::
                 [stats.lognorm, 0.75]] #column 2 distribution - stats.lognorm(s = 0.75)
 
     sim = DataSimulator(parameters, random_state=1)
-
-    import scipy.stats as stats
 
     hierarchy = [2, #treatments
                 3, #samples
@@ -148,7 +156,7 @@ this value. You can test this with the following code. ::
 
     print("Coverage:", coverage/loops)
     
-    Coverage: 0.946
+    Coverage: 0.952
 
 This is within the Monte Carlo error of the simulation (+/- 0.7%) of 95%, so we can feel
 confident in this method of interval computation.
@@ -234,12 +242,12 @@ for **compare** when computing a confidence interval. ::
     random_state=1,
     )
 
-    (0.3410887712843298, 1.7540918236455125)
+    (-0.6574380533380122, 1.7894846036377787)
 
 This confidence interval corresponds to the slope in a linear model. You can check this by
 computing the slope coefficient via Ordinary Least Squares. ::
 
-    import scipy.stats
+    import scipy.stats as stats
     from hierarch.internal_functions import GroupbyMean
 
     grouper = GroupbyMean()
@@ -250,7 +258,7 @@ computing the slope coefficient via Ordinary Least Squares. ::
     rvalue=0.6444075548383587, pvalue=0.08456152533094284, 
     stderr=0.5094006523081002, intercept_stderr=1.3950511403849626)
 
-The slope, 1.0515, is indeed in the center of our computed interval (within Monte Carlo error).
+The slope, 1.0515, is indeed contained in our computed interval.
 
 Again, it is worthwhile to check that confidence_interval is performing adequately. You can
 set up a simulation as above to check the coverage of the 95% confidence interval. ::
@@ -268,7 +276,7 @@ set up a simulation as above to check the coverage of the 95% confidence interva
 
     print(coverage/loops)
 
-    0.956
+    0.949
 
 This is within the Monte Carlo error of the simulation (+/- 0.7%) of 95% and therefore
 acceptable. You can check the coverage of other intervals by changing the **interval** keyword
@@ -288,7 +296,7 @@ interest. ::
 
     print(coverage/loops)
 
-    0.99
+    0.98
 
 Using the confidence_interval function, researchers can rapidly calculate confidence intervals for
 effect sizes that maintain nominal coverage without worrying about distributional assumptions. 

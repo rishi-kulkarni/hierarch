@@ -9,3 +9,4 @@ Reference
     hierarch.stats
     hierarch.power
     hierarch.resampling
+    hierarch.design
