@@ -11,7 +11,7 @@ not by their row count -- this matters for unbalanced designs). 'indexes' and
 import numpy as np
 import pytest
 
-from hierarch.internal_functions import GroupbyMean
+from hierarch.internal_functions import GroupbyMean, weights_to_index
 from hierarch.resampling import bootstrap_plan, draw_bootstrap_weights
 from tests.conftest import design_names
 from tests._reference import groupby_mean, nested_weighted_mean
@@ -33,7 +33,7 @@ def _transform(plan, rng, start, kind, data):
     """Draw one set of bootstrap weights and apply them to data."""
     weights = draw_bootstrap_weights(plan, rng, start, kind)
     if kind == "indexes":
-        return data.astype(np.float64)[np.repeat(np.arange(data.shape[0]), weights)]
+        return data.astype(np.float64)[weights_to_index(weights)]
     out = data.astype(np.float64).copy()
     out[:, -1] = out[:, -1] * weights
     return out

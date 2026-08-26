@@ -10,6 +10,7 @@ import pandas as pd
 from hierarch.internal_functions import (
     GroupbyMean,
     bivar_central_moment,
+    weights_to_index,
 )
 from hierarch.resampling import (
     BOOTSTRAP_KINDS,
@@ -1475,7 +1476,7 @@ def hierarchical_randomization(
 
     for weights in weights_batch:
         # get a bootstrap sample
-        bootstrapped_sample = data[np.repeat(np.arange(data.shape[0]), weights)]
+        bootstrapped_sample = data[weights_to_index(weights)]
 
         if permutations == "all":
             # exact test: every distinct labeling of the treatment column,
