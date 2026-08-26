@@ -1473,11 +1473,9 @@ def hierarchical_randomization(
         plan, rng, treatment_col + 2, "indexes", bootstraps
     )
 
-    for i in range(bootstraps):
+    for weights in weights_batch:
         # get a bootstrap sample
-        bootstrapped_sample = data[
-            np.repeat(np.arange(data.shape[0]), weights_batch[i])
-        ]
+        bootstrapped_sample = data[np.repeat(np.arange(data.shape[0]), weights)]
 
         if permutations == "all":
             # exact test: every distinct labeling of the treatment column,
@@ -1487,8 +1485,8 @@ def hierarchical_randomization(
             perm_plan = permutation_plan(bootstrapped_sample, treatment_col)
             labels = draw_permuted_labels(perm_plan, rng, permutations)
 
-        for j in range(labels.shape[0]):
+        for label_row in labels:
             # yield a permuted sample
             out = bootstrapped_sample.copy()
-            out[:, treatment_col] = labels[j]
+            out[:, treatment_col] = label_row
             yield out

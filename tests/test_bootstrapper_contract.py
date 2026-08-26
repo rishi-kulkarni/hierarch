@@ -27,7 +27,7 @@ def _is_balanced(hier):
     return all(isinstance(h, int) for h in hier)
 
 
-def _transform(plan, rng, start, kind, data, skip=()):
+def _transform(plan, rng, start, kind, data):
     """Draw one set of bootstrap weights and apply them, mirroring the old
     Bootstrapper.transform contract."""
     weights = draw_bootstrap_weights(plan, rng, start, kind)

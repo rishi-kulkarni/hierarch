@@ -14,9 +14,9 @@ import pytest
 import scipy.stats as stats
 
 from hierarch.resampling import (
+    draw_permuted_labels,
     exact_label_matrix,
     permutation_plan,
-    draw_permuted_labels,
 )
 from tests._reference import groupby_mean, make_design, n_distinct_permutations
 
