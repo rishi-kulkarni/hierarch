@@ -30,8 +30,7 @@ def _is_balanced(hier):
 
 
 def _transform(plan, rng, start, kind, data):
-    """Draw one set of bootstrap weights and apply them, mirroring the old
-    Bootstrapper.transform contract."""
+    """Draw one set of bootstrap weights and apply them to data."""
     weights = draw_bootstrap_weights(plan, rng, start, kind)
     if kind == "indexes":
         return data.astype(np.float64)[np.repeat(np.arange(data.shape[0]), weights)]
