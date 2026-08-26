@@ -33,11 +33,12 @@ def _is_balanced(hier):
     return all(isinstance(h, int) for h in hier)
 
 
-def _permute(plan, rng, target, col):
-    """Draw one permutation and assign it into ``target`` in place, mirroring
-    the old Permuter.transform contract (returns the same, mutated array)."""
-    target[:, col] = draw_permuted_labels(plan, rng, 1)[0]
-    return target
+def _permute(plan, rng, data, col):
+    """Draw one permutation and apply it to the target column, leaving
+    ``data`` untouched."""
+    out = data.copy()
+    out[:, col] = draw_permuted_labels(plan, rng, 1)[0]
+    return out
 
 
 class TestPermuterContract:
@@ -49,9 +50,8 @@ class TestPermuterContract:
         rng = np.random.default_rng(1)
         plan = permutation_plan(agg, 0)
         for _ in range(20):
-            work = agg.copy()
-            out = _permute(plan, rng, work, 0)
-            assert out is work  # in-place contract
+            out = _permute(plan, rng, agg, 0)
+            assert out is not agg  # does not mutate the input
             assert Counter(out[:, 0]) == Counter(agg[:, 0])
             np.testing.assert_array_equal(out[:, 1:], agg[:, 1:])
 
@@ -68,7 +68,7 @@ class TestPermuterContract:
         rng = np.random.default_rng(1)
         plan = permutation_plan(agg, 1)
         for _ in range(20):
-            out = _permute(plan, rng, agg.copy(), 1)
+            out = _permute(plan, rng, agg, 1)
             for s in np.unique(strata):
                 assert Counter(out[strata == s, 1]) == Counter(agg[strata == s, 1])
             np.testing.assert_array_equal(
@@ -84,7 +84,7 @@ class TestPermuterContract:
         plan = permutation_plan(data, 0)
         ids = _cluster_ids(data, 2)  # (col0, col1) clusters
         for _ in range(20):
-            out = _permute(plan, rng, data.copy(), 0)
+            out = _permute(plan, rng, data, 0)
             for c in np.unique(ids):
                 assert np.ptp(out[ids == c, 0]) == 0
             assert Counter(out[:, 0]) == Counter(data[:, 0])
@@ -96,9 +96,7 @@ class TestPermuterContract:
         rng = np.random.default_rng(3)
         plan = permutation_plan(data, 0)
         reps = 12000
-        counts = Counter(
-            tuple(_permute(plan, rng, data.copy(), 0)[:, 0]) for _ in range(reps)
-        )
+        counts = Counter(tuple(_permute(plan, rng, data, 0)[:, 0]) for _ in range(reps))
         assert len(counts) == 24
         chi = stats.chisquare(list(counts.values()))
         assert chi.pvalue > 1e-4, counts
@@ -110,9 +108,7 @@ class TestPermuterContract:
         rng = np.random.default_rng(3)
         plan = permutation_plan(data, 1)
         reps = 6000
-        counts = Counter(
-            tuple(_permute(plan, rng, data.copy(), 1)[:, 1]) for _ in range(reps)
-        )
+        counts = Counter(tuple(_permute(plan, rng, data, 1)[:, 1]) for _ in range(reps))
         assert len(counts) == 36  # 3! * 3!
         chi = stats.chisquare(list(counts.values()))
         assert chi.pvalue > 1e-4
@@ -148,7 +144,7 @@ class TestPermuterContract:
         def draws(seed):
             rng = np.random.default_rng(seed)
             plan = permutation_plan(data, 0)
-            return [_permute(plan, rng, data.copy(), 0) for _ in range(5)]
+            return [_permute(plan, rng, data, 0) for _ in range(5)]
 
         for x, y in zip(draws(9), draws(9)):
             np.testing.assert_array_equal(x, y)
