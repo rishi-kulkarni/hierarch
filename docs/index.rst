@@ -14,3 +14,4 @@ This is the hierarch documentation. Please start with the User Manual.
 
    user/index.rst
    reference/index.rst
+   changelog.rst
