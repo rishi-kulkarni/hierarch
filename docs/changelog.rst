@@ -6,7 +6,12 @@ Changelog
 
 - Removed Numba. Resampling and statistics are now vectorized numpy: batched
   permutations and einsum-based statistic scoring, built on per-instance
-  ``PCG64`` generators.
+  ``PCG64`` generators. In a multi-process calibration workload (14 parallel
+  workers, each running hundreds of ``hypothesis_test`` calls), this measured
+  about 5x faster than 1.1.3 on the same machine, since there is no longer
+  per-process Numba JIT compilation to pay for on every worker's cold start.
+  Single-process, long-running workloads that fully amortize JIT compilation
+  should see a smaller effect.
 - Breaking: seeded ``random_state`` output is no longer bit-identical to
   pre-2.0 releases. Results pinned to a specific seed will differ after
   upgrading.
