@@ -8,10 +8,12 @@ Changelog
   permutations and einsum-based statistic scoring, built on per-instance
   ``PCG64`` generators. In a multi-process calibration workload (14 parallel
   workers, each running hundreds of ``hypothesis_test`` calls), this measured
-  about 5x faster than 1.1.3 on the same machine, since there is no longer
-  per-process Numba JIT compilation to pay for on every worker's cold start.
-  Single-process, long-running workloads that fully amortize JIT compilation
-  should see a smaller effect.
+  about 5x faster than 1.1.3 on the same machine. This is not primarily a
+  JIT-warmup effect (steady-state, already-compiled iterations show the same
+  ~5x gap as the full run): 1.1.3 scores each of the ``bootstraps x
+  permutations`` statistics with its own Python-level call into a compiled
+  function; 2.0.0 draws and scores the whole batch in one vectorized pass,
+  which is faster even against warm Numba.
 - Breaking: seeded ``random_state`` output is no longer bit-identical to
   pre-2.0 releases. Results pinned to a specific seed will differ after
   upgrading.
