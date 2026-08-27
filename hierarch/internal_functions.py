@@ -1,26 +1,6 @@
 import numpy as np
 
 
-def nb_data_grabber(data, col, treatment_labels):
-    """Fancy indexing. Assumes values to grab are in column index: -1.
-
-    Parameters
-    ----------
-    data : 2D array
-        Target data.
-    col : int
-        Index of target column.
-    treatment_labels : 1D array or list
-        Labels in target column to parse.
-
-    Returns
-    -------
-    list of 1D arrays
-        Values from col: -1 corresponding to the treatment_labels in target column.
-    """
-    return [data[:, -1][np.equal(data[:, col], key)] for key in treatment_labels]
-
-
 def nb_unique(input_data, axis=0):
     """2D np.unique(a, return_index=True, return_counts=True).
 
