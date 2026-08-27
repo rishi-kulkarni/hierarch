@@ -1,8 +1,8 @@
 Changelog
 =========
 
-2.0.0
------
+2.0.0 (2026-08-26)
+-------------------
 
 - Removed Numba. Resampling and statistics are now vectorized numpy: batched
   permutations and einsum-based statistic scoring, built on per-instance
