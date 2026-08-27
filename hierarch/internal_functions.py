@@ -84,10 +84,6 @@ def bivar_central_moment(x, y, pow=1, ddof=1):
     return np.sum((xc**pow) * (yc**pow)) / (n - ddof)
 
 
-def _repeat(target, counts):
-    return np.repeat(np.array(target), counts)
-
-
 def id_cluster_counts(design):
     """Identifies the hierarchy in a design matrix.
 
@@ -303,9 +299,10 @@ class GroupbyMean:
         resampled : bool, optional
             Set to True if target is an index-resampled version of the fitted
             reference data (rows repeated or dropped, as produced by
-            Bootstrapper(kind="indexes")). Row multiplicities are then treated
-            as bootstrap weights over the reference geometry, so the result
-            agrees with aggregating the equivalent kind="weights" sample.
+            drawing bootstrap weights with kind="indexes"). Row multiplicities
+            are then treated as bootstrap weights over the reference geometry,
+            so the result agrees with aggregating the equivalent kind="weights"
+            sample.
             By default False, which assumes target has the same row geometry
             as the fitted reference.
 
